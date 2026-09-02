@@ -93,7 +93,18 @@ func getPPCBankToken(forceRefresh bool) (string, error) {
 	log.Println("ppcbank: fetching a new API token via security_check")
 
 	body, _ := json.Marshal(map[string]string{"merchantCode": merchantCode, "password": password})
-	resp, err := httpClient.Post(config.Get().PPCBankAPIBaseURL+"/security_check", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, config.Get().PPCBankAPIBaseURL+"/security_check", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to build PPCBank request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Explicit User-Agent — without this, Go's net/http sends the stock
+	// default "Go-http-client/1.1", which is a well-known signature many
+	// firewalls/WAFs treat as automated/bot traffic and silently drop
+	// rather than respond to (the connection just hangs until timeout,
+	// with no clean HTTP rejection — exactly the symptom observed here).
+	req.Header.Set("User-Agent", "BubbleWhite-Backend/1.0")
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("ppcbank: security_check request failed: %v", err)
 		return "", fmt.Errorf("failed to reach PPCBank API: %w", err)
@@ -190,6 +201,7 @@ func doPPCBankRequest(path string, payload any, out any) error {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("User-Agent", "BubbleWhite-Backend/1.0")
 		return httpClient.Do(req)
 	}
 
