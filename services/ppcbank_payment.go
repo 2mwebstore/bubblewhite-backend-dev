@@ -98,7 +98,6 @@ func getPPCBankToken(forceRefresh bool) (string, error) {
 		return "", fmt.Errorf("failed to build PPCBank request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	setPPCBankRequestHeaders(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("ppcbank: security_check request failed: %v", err)
@@ -179,32 +178,6 @@ type PPCBankPaymentDetail struct {
 	TransactionHash         string         `json:"transactionHash"`
 }
 
-// doPPCBankRequest is the shared HTTP logic for authenticated PPCBank
-// calls. Handles the Bearer token and retries once on resultCode 900024
-// ("Token has expired") by force-refreshing — same reasoning as the
-// 401-retry logic in bakong_payment.go, just keyed off PPCBank's own
-// in-body error code instead of an HTTP status.
-// setPPCBankRequestHeaders applies a fuller, more standard header profile
-// to every PPCBank request — shared by both call sites (security_check
-// and the generic request builder) so they can't drift out of sync.
-// Beyond Content-Type/Authorization, this adds Accept/Accept-Language and
-// a mainstream browser User-Agent rather than a custom one — some
-// firewalls/WAFs specifically flag unusual or missing UA strings as
-// bot-like traffic and drop the connection silently (no clean HTTP
-// rejection, just a timeout), which matches the symptom seen in testing.
-// Deliberately NOT setting Accept-Encoding: Go's http.Transport handles
-// gzip transparently on its own only when this header is left unset — if
-// we set it explicitly ourselves, Go disables that automatic
-// decompression and hands back raw compressed bytes instead, which would
-// break every response parse in this file for a completely unrelated
-// reason. This is a genuine, documented Go net/http behavior, not a
-// guess — leaving Accept-Encoding alone avoids introducing that bug.
-func setPPCBankRequestHeaders(req *http.Request) {
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-}
-
 func doPPCBankRequest(path string, payload any, out any) error {
 	call := func(token string) (*http.Response, error) {
 		body, err := json.Marshal(payload)
@@ -217,7 +190,6 @@ func doPPCBankRequest(path string, payload any, out any) error {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
-		setPPCBankRequestHeaders(req)
 		return httpClient.Do(req)
 	}
 
