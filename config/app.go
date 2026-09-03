@@ -35,34 +35,8 @@ type Config struct {
 	SeedAdminEmail    string
 	SeedAdminPassword string
 
-	// Bakong Open API (https://api-bakong.nbc.gov.kh) — used server-side to
-	// independently verify Bakong payments (never trusting a client-supplied
-	// "I paid" claim). BakongAPIEmail must be an email already registered
-	// with NBC's Open API portal.
-	BakongAPIBaseURL string
-	BakongAPIEmail   string
-	// The merchant's own receiving account — same value as Nuxt's
-	// BAKONG_ACCOUNT_ID (used there for QR generation). This backend uses
-	// it to independently confirm a verified payment actually landed in
-	// THIS account, not just that Bakong reported some transaction as
-	// successful — see OrderService.GetTransactionDetail.
-	BakongAccountID string
-	// Optional — see services/bakong_payment.go's getBakongAPIToken for
-	// how this is used. Not required; renew_token + BakongAPIEmail is the
-	// normal path.
-	BakongAPIToken string
-
-	// Shared secret for service-to-service calls (currently just the Nuxt
-	// frontend fetching the cached Bakong token from this backend, instead
-	// of independently calling Bakong's renew_token itself — see
-	// controllers/internal_controller.go). NOT a customer/admin-facing
-	// credential; this is what keeps that endpoint from being callable by
-	// anyone on the public internet.
-	InternalAPISecret string
-
-	// PPCBank Payment Gateway — a second KHQR-based payment option
-	// alongside Bakong. Unlike Bakong, PPCBank's own docs are explicit
-	// that HTTP status is 200 even on logical failure (see
+	// PPCBank Payment Gateway — a KHQR-based payment option. Their own
+	// docs are explicit that HTTP status is 200 even on logical failure (see
 	// services/ppcbank_payment.go) — the actual result always lives in
 	// the response body, never inferred from status alone.
 	PPCBankAPIBaseURL   string
@@ -128,12 +102,6 @@ func LoadConfig() *Config {
 
 			SeedAdminEmail:    getEnv("SEED_ADMIN_EMAIL", "admin@bubblewhite.co"),
 			SeedAdminPassword: getEnv("SEED_ADMIN_PASSWORD", "ChangeMe123!"),
-
-			BakongAPIBaseURL:  getEnv("BAKONG_API_BASE_URL", "https://api-bakong.nbc.gov.kh"),
-			BakongAPIEmail:    getEnv("BAKONG_API_EMAIL", ""),
-			BakongAccountID:   getEnv("BAKONG_ACCOUNT_ID", ""),
-			BakongAPIToken:    getEnv("BAKONG_API_TOKEN", ""),
-			InternalAPISecret: getEnv("INTERNAL_API_SECRET", ""),
 
 			// Default matches the sandbox domain shown in PPCBank's own
 			// official spec document (PPCB_Payment_Gateway_API_v_1_0_4) —

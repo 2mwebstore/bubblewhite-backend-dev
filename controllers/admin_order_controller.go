@@ -51,12 +51,13 @@ func (ctrl *AdminOrderController) ListByCustomer(c *gin.Context) {
 		utils.BadRequest(c, "invalid customer id")
 		return
 	}
-	orders, err := ctrl.Service.ListByCustomer(uint(id))
+	page := utils.ParsePageParams(c)
+	orders, total, err := ctrl.Service.ListByCustomer(uint(id), page)
 	if err != nil {
 		utils.InternalError(c, "failed to fetch orders")
 		return
 	}
-	utils.OK(c, orders)
+	utils.OKWithMeta(c, orders, page.BuildMeta(total))
 }
 
 // GET /api/admin/orders/:id (requires order.view)
@@ -105,7 +106,7 @@ func (ctrl *AdminOrderController) UpdateStatus(c *gin.Context) {
 }
 
 // POST /api/admin/orders/:id/verify-payment (requires order.manage)
-// Re-checks a Bakong order's payment status against Bakong's real API —
+// Re-checks a PPCBank order's payment status against PPCBank's real API —
 // for when a customer says they paid but the order still shows unpaid.
 func (ctrl *AdminOrderController) VerifyPayment(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -114,31 +115,21 @@ func (ctrl *AdminOrderController) VerifyPayment(c *gin.Context) {
 		return
 	}
 
-	// Fetch first to know which payment method this order actually used
-	// — the same "re-check payment" button on the admin order detail
-	// page now works for both Bakong and PPCBank orders, dispatching to
-	// whichever real API actually backs that order.
+	// Fetch first to confirm this order actually used PPCBank — the only
+	// payment method this action supports (cash needs no verification,
+	// Bakong's integration was removed).
 	existing, err := ctrl.Service.GetByIDAdmin(uint(id))
 	if err != nil {
 		utils.NotFound(c, "order not found")
 		return
 	}
-
-	var order *models.Order
-	switch existing.PaymentMethod {
-	case models.PaymentMethodBakong:
-		order, err = ctrl.Service.VerifyBakongPayment(uint(id))
-	case models.PaymentMethodPPCBank:
-		order, err = ctrl.Service.VerifyPPCBankPayment(uint(id))
-	default:
-		utils.BadRequest(c, "this order was not paid via Bakong or PPCBank")
+	if existing.PaymentMethod != models.PaymentMethodPPCBank {
+		utils.BadRequest(c, "this order was not paid via PPCBank")
 		return
 	}
+
+	order, err := ctrl.Service.VerifyPPCBankPayment(uint(id))
 	if err != nil {
-		if errors.Is(err, services.ErrOrderNotBakong) {
-			utils.BadRequest(c, "this order was not paid via Bakong")
-			return
-		}
 		if errors.Is(err, services.ErrOrderNotPPCBank) {
 			utils.BadRequest(c, "this order was not paid via PPCBank")
 			return
@@ -148,28 +139,4 @@ func (ctrl *AdminOrderController) VerifyPayment(c *gin.Context) {
 		return
 	}
 	utils.OK(c, order)
-}
-
-// GET /api/admin/orders/:id/transaction-detail (requires order.view)
-// Full Bakong transaction detail — tracking status, receiver bank, sender
-// account — for an admin investigating a specific payment. Read-only, so
-// gated on order.view (same as viewing the order itself) rather than
-// order.manage — this doesn't change anything, unlike VerifyPayment above.
-func (ctrl *AdminOrderController) GetTransactionDetail(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		utils.BadRequest(c, "invalid order id")
-		return
-	}
-
-	detail, err := ctrl.Service.GetTransactionDetail(uint(id))
-	if err != nil {
-		if errors.Is(err, services.ErrOrderNotBakong) {
-			utils.BadRequest(c, "this order was not paid via Bakong")
-			return
-		}
-		utils.NotFound(c, err.Error())
-		return
-	}
-	utils.OK(c, detail)
 }

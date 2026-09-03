@@ -22,14 +22,13 @@ func NewOrderController(s *services.OrderService) *OrderController {
 }
 
 type checkoutInput struct {
-	PaymentMethod string `json:"paymentMethod" validate:"required,oneof=cash bakong"`
+	PaymentMethod string `json:"paymentMethod" validate:"required,oneof=cash"`
 	Address       string `json:"address" validate:"required"`
 	Phone         string `json:"phone" validate:"required"`
-	// PaymentReference is the MD5 hash bakong-khqr generated for this
-	// checkout's KHQR (see BakongPaymentModal.vue) — required for Bakong,
-	// ignored for cash. This is only a POINTER to what to check; the
-	// actual payment confirmation always comes from Bakong's own API
-	// inside Checkout(), never from trusting this request.
+	// PaymentReference is no longer used now that Checkout is cash-only
+	// (Bakong, the only method that ever needed this, was removed) —
+	// kept in the request struct only so old/cached frontend clients
+	// sending this field don't fail JSON binding; the value is ignored.
 	PaymentReference string `json:"paymentReference"`
 }
 
@@ -68,18 +67,6 @@ func (ctrl *OrderController) Checkout(c *gin.Context) {
 			utils.FailWithErrors(c, map[string]string{"phone": "សូមបញ្ចូលលេខទូរស័ព្ទ"})
 			return
 		}
-		if errors.Is(err, services.ErrPaymentReferenceRequired) {
-			utils.BadRequest(c, "payment reference is required for Bakong payments")
-			return
-		}
-		if errors.Is(err, services.ErrBakongNotConfigured) {
-			// A different, more actionable message than the generic
-			// "try again" — retrying won't help here, the server itself
-			// needs BAKONG_API_EMAIL configured before Bakong checkout can
-			// ever succeed.
-			utils.BadRequest(c, "ការទូទាត់ Bakong មិនទាន់អាចប្រើប្រាស់បានទេ សូមទាក់ទងអ្នកគ្រប់គ្រង")
-			return
-		}
 		if errors.Is(err, services.ErrPaymentNotVerified) {
 			utils.BadRequest(c, "មិនអាចផ្ទៀងផ្ទាត់ការទូទាត់បានទេ សូមព្យាយាមម្តងទៀត")
 			return
@@ -98,7 +85,7 @@ type initiatePPCBankInput struct {
 // POST /api/customer/orders/ppcbank/initiate — requires customer auth.
 // Creates a PENDING order immediately and returns a PPCBank paymentURL to
 // redirect the customer to — see OrderService.InitiatePPCBankCheckout for
-// why this differs from the cash/Bakong Checkout() flow above.
+// why this differs from Checkout() above.
 func (ctrl *OrderController) InitiatePPCBankCheckout(c *gin.Context) {
 	var in initiatePPCBankInput
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -190,14 +177,17 @@ func (ctrl *OrderController) PPCBankReturnStatus(c *gin.Context) {
 	utils.OK(c, order)
 }
 
-// GET /api/customer/orders — requires customer auth — order history list
+// GET /api/customer/orders — requires customer auth — order history list,
+// paginated (page/pageSize query params, same convention as every other
+// paginated list in this app — see utils.ParsePageParams).
 func (ctrl *OrderController) List(c *gin.Context) {
-	orders, err := ctrl.Service.ListByCustomer(middlewares.CurrentCustomerID(c))
+	page := utils.ParsePageParams(c)
+	orders, total, err := ctrl.Service.ListByCustomer(middlewares.CurrentCustomerID(c), page)
 	if err != nil {
 		utils.InternalError(c, "failed to fetch orders")
 		return
 	}
-	utils.OK(c, orders)
+	utils.OKWithMeta(c, orders, page.BuildMeta(total))
 }
 
 // GET /api/customer/orders/:id — requires customer auth — order detail

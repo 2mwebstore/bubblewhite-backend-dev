@@ -32,7 +32,6 @@ type Settings struct {
 	// admin explicitly turns it on, since it depends on BAKONG_API_EMAIL
 	// etc. actually being configured correctly first.
 	CashPaymentEnabled    bool `json:"cashPaymentEnabled" gorm:"not null;default:true"`
-	BakongPaymentEnabled  bool `json:"bakongPaymentEnabled" gorm:"not null;default:false"`
 	PPCBankPaymentEnabled bool `json:"ppcbankPaymentEnabled" gorm:"not null;default:false"`
 
 	// Store location — set by the admin picking a point on a map (see
@@ -46,6 +45,12 @@ type Settings struct {
 	Latitude           float64 `json:"latitude" gorm:"not null;default:0"`
 	Longitude          float64 `json:"longitude" gorm:"not null;default:0"`
 	DeliveryDistanceKm float64 `json:"deliveryDistanceKm" gorm:"not null;default:0"`
+
+	// ShippingFee is a flat amount added to every order's total at
+	// checkout (see OrderService.buildOrderItemsFromCart). Defaults to 0
+	// — a real, meaningful "no shipping charge configured" state, not
+	// something needing NULL/pointer handling.
+	ShippingFee float64 `json:"shippingFee" gorm:"not null;default:0"`
 
 	UpdatedAt time.Time `json:"updatedAt"`
 }

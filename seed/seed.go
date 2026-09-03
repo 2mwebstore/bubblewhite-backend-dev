@@ -231,12 +231,12 @@ func seedSettings(db *gorm.DB) {
 	log.Println("seed: created default settings row")
 }
 
-// seedPaymentMethods creates the three built-in payment method rows if
-// they don't exist yet, migrating their initial Enabled state from the
+// seedPaymentMethods creates the built-in payment method rows if they
+// don't exist yet, migrating their initial Enabled state from the
 // existing Settings.*PaymentEnabled booleans (if a settings row already
 // exists) so nobody's current configuration gets silently reset by this
-// migration to a proper table. IsPrimary defaults to Bakong, matching
-// what was previously hardcoded as the default selection in cart.vue.
+// migration to a proper table. IsPrimary defaults to PPCBank, the primary
+// digital payment option now that Bakong's integration has been removed.
 func seedPaymentMethods(db *gorm.DB) {
 	var count int64
 	db.Model(&models.PaymentMethod{}).Count(&count)
@@ -248,18 +248,15 @@ func seedPaymentMethods(db *gorm.DB) {
 	hasSettings := db.First(&settings, models.SettingsID).Error == nil
 
 	cashEnabled := true
-	bakongEnabled := false
 	ppcbankEnabled := false
 	if hasSettings {
 		cashEnabled = settings.CashPaymentEnabled
-		bakongEnabled = settings.BakongPaymentEnabled
 		ppcbankEnabled = settings.PPCBankPaymentEnabled
 	}
 
 	methods := []models.PaymentMethod{
-		{Code: models.PaymentMethodBakong, Name: "Bakong KHQR", Enabled: bakongEnabled, IsPrimary: true, SortOrder: 1},
-		{Code: models.PaymentMethodPPCBank, Name: "PPCBank KHQR", Enabled: ppcbankEnabled, IsPrimary: false, SortOrder: 2},
-		{Code: models.PaymentMethodCash, Name: "សាច់ប្រាក់", Enabled: cashEnabled, IsPrimary: false, SortOrder: 3},
+		{Code: models.PaymentMethodPPCBank, Name: "PPCBank KHQR", Enabled: ppcbankEnabled, IsPrimary: true, SortOrder: 1},
+		{Code: models.PaymentMethodCash, Name: "សាច់ប្រាក់", Enabled: cashEnabled, IsPrimary: false, SortOrder: 2},
 	}
 	if err := db.Create(&methods).Error; err != nil {
 		log.Printf("seed: failed to create payment methods: %v", err)

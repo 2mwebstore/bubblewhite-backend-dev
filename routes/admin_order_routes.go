@@ -13,5 +13,4 @@ func RegisterAdminOrderRoutes(api *gin.RouterGroup, c *Container) {
 	orders.GET("/:id", middlewares.RequirePermission(c.DB, "order.view"), c.AdminOrder.GetByID)
 	orders.PATCH("/:id/status", middlewares.RequirePermission(c.DB, "order.manage"), c.AdminOrder.UpdateStatus)
 	orders.POST("/:id/verify-payment", middlewares.RequirePermission(c.DB, "order.manage"), c.AdminOrder.VerifyPayment)
-	orders.GET("/:id/transaction-detail", middlewares.RequirePermission(c.DB, "order.view"), c.AdminOrder.GetTransactionDetail)
 }

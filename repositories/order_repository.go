@@ -60,9 +60,13 @@ func (f OrderFilter) Scope() func(db *gorm.DB) *gorm.DB {
 // items preloaded — the list view only needs id/total/status/date, not
 // every line item; detail views (FindByIDForCustomer/FindByIDAdmin) do
 // preload.
-func (r *OrderRepository) FindByCustomer(customerID uint) ([]models.Order, error) {
+func (r *OrderRepository) FindByCustomer(customerID uint, scopes ...func(*gorm.DB) *gorm.DB) ([]models.Order, error) {
 	var orders []models.Order
-	err := r.DB.Where("customer_id = ?", customerID).Order("created_at DESC").Find(&orders).Error
+	q := r.DB.Where("customer_id = ?", customerID).Order("created_at DESC")
+	for _, scope := range scopes {
+		q = scope(q)
+	}
+	err := q.Find(&orders).Error
 	return orders, err
 }
 

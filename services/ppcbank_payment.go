@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +21,7 @@ import (
 )
 
 // Package-level token cache, same two-tier (in-memory + database) pattern
-// as bakong_payment.go — see that file for the full reasoning. Reuses this
-// package's shared httpClient and FlexibleNumber type (both already
-// defined in bakong_payment.go).
+// used throughout this package.
 var (
 	ppcbankTokenMu    sync.Mutex
 	ppcbankDB         *gorm.DB
@@ -31,6 +30,38 @@ var (
 	ppcbankTokenTTL   = 12 * time.Hour
 	ErrPPCBankNotSet  = errors.New("PPCBANK_MERCHANT_CODE/PPCBANK_PASSWORD is not configured")
 )
+
+// httpClient is shared across this whole package for every outbound
+// PPCBank request. Previously lived in bakong_payment.go (deleted when
+// Bakong's integration was removed) — moved here as its new home, since
+// this is the only file that needs it now. A real, documented bug was
+// caught by `go build` after that removal: gofmt only validates syntax
+// per file, it does NOT do cross-file symbol resolution, so a file
+// deleting a package-level var/type that OTHER files still reference
+// compiles clean under gofmt but fails a real build. This is exactly
+// that case — restored here so both actually compile again.
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
+// FlexibleNumber decodes from either a JSON number or a JSON string,
+// always producing a float64 — for numeric fields that get documented as
+// one type but returned as another in practice (a real, observed PPCBank
+// behavior, not a hypothetical). Also moved here from the deleted
+// bakong_payment.go for the same reason as httpClient above.
+type FlexibleNumber float64
+
+func (f *FlexibleNumber) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(string(data), `"`)
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return err
+	}
+	*f = FlexibleNumber(v)
+	return nil
+}
 
 // SetPPCBankDB wires the database connection this package uses to persist
 // the PPCBank API token — called once from routes.Build() at boot.
@@ -98,6 +129,7 @@ func getPPCBankToken(forceRefresh bool) (string, error) {
 		return "", fmt.Errorf("failed to build PPCBank request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setPPCBankRequestHeaders(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("ppcbank: security_check request failed: %v", err)
@@ -178,6 +210,32 @@ type PPCBankPaymentDetail struct {
 	TransactionHash         string         `json:"transactionHash"`
 }
 
+// doPPCBankRequest is the shared HTTP logic for authenticated PPCBank
+// calls. Handles the Bearer token and retries once on resultCode 900024
+// ("Token has expired") by force-refreshing — same reasoning as the
+// 401-retry logic in bakong_payment.go, just keyed off PPCBank's own
+// in-body error code instead of an HTTP status.
+// setPPCBankRequestHeaders applies a fuller, more standard header profile
+// to every PPCBank request — shared by both call sites (security_check
+// and the generic request builder) so they can't drift out of sync.
+// Beyond Content-Type/Authorization, this adds Accept/Accept-Language and
+// a mainstream browser User-Agent rather than a custom one — some
+// firewalls/WAFs specifically flag unusual or missing UA strings as
+// bot-like traffic and drop the connection silently (no clean HTTP
+// rejection, just a timeout), which matches the symptom seen in testing.
+// Deliberately NOT setting Accept-Encoding: Go's http.Transport handles
+// gzip transparently on its own only when this header is left unset — if
+// we set it explicitly ourselves, Go disables that automatic
+// decompression and hands back raw compressed bytes instead, which would
+// break every response parse in this file for a completely unrelated
+// reason. This is a genuine, documented Go net/http behavior, not a
+// guess — leaving Accept-Encoding alone avoids introducing that bug.
+func setPPCBankRequestHeaders(req *http.Request) {
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+}
+
 func doPPCBankRequest(path string, payload any, out any) error {
 	call := func(token string) (*http.Response, error) {
 		body, err := json.Marshal(payload)
@@ -190,6 +248,7 @@ func doPPCBankRequest(path string, payload any, out any) error {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
+		setPPCBankRequestHeaders(req)
 		return httpClient.Do(req)
 	}
 
@@ -320,8 +379,7 @@ func appendQueryParam(base, key, value string) string {
 }
 
 // CheckPPCBankPaymentStatus looks up a payment by billNumber (our order
-// reference) — the poll/verify equivalent of Bakong's
-// CheckBakongPaymentByMD5. Used both as a fallback when the webhook
+// reference). Used both as a fallback when the webhook
 // doesn't arrive (PPCBank's own docs say it has no retry mechanism), and
 // as the authoritative re-check whenever the webhook DOES arrive — the
 // webhook payload itself is never trusted on its own, see the webhook

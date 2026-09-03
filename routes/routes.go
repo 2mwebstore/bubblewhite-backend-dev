@@ -28,7 +28,6 @@ type Container struct {
 	Order          *controllers.OrderController
 	AdminOrder     *controllers.AdminOrderController
 	AdminCustomer  *controllers.AdminCustomerController
-	Internal       *controllers.InternalController
 	PPCBankWebhook *controllers.PPCBankWebhookController
 	PaymentMethod  *controllers.PaymentMethodController
 }
@@ -36,10 +35,6 @@ type Container struct {
 // Build wires repositories -> services -> controllers. This is the single
 // place that knows how the whole dependency graph fits together.
 func Build(db *gorm.DB) *Container {
-	// Bakong Open API token cache persists to the database (see
-	// services.SetBakongDB) so it survives restarts/redeploys instead of
-	// forcing a fresh renew_token call every time the service boots.
-	services.SetBakongDB(db)
 	services.SetPPCBankDB(db)
 
 	// Repositories
@@ -68,7 +63,7 @@ func Build(db *gorm.DB) *Container {
 	bannerService := services.NewBannerService(bannerRepo)
 	customerService := services.NewCustomerService(customerRepo)
 	cartService := services.NewCartService(cartRepo, productRepo)
-	orderService := services.NewOrderService(orderRepo, cartRepo, productRepo, paymentMethodService)
+	orderService := services.NewOrderService(orderRepo, cartRepo, productRepo, paymentMethodService, settingsRepo)
 
 	// Controllers
 	return &Container{
@@ -89,7 +84,6 @@ func Build(db *gorm.DB) *Container {
 		Order:          controllers.NewOrderController(orderService),
 		AdminOrder:     controllers.NewAdminOrderController(orderService),
 		AdminCustomer:  controllers.NewAdminCustomerController(customerService),
-		Internal:       controllers.NewInternalController(),
 		PPCBankWebhook: controllers.NewPPCBankWebhookController(orderService),
 	}
 }
@@ -111,7 +105,6 @@ func RegisterRoutes(r *gin.Engine, c *Container) {
 	RegisterCustomerRoutes(api, c)
 	RegisterOrderRoutes(api, c)
 	RegisterAdminCustomerRoutes(api, c)
-	RegisterInternalRoutes(api, c)
 	RegisterWebhookRoutes(api, c)
 	RegisterAdminOrderRoutes(api, c)
 }

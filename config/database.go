@@ -59,7 +59,6 @@ func AutoMigrate(db *gorm.DB) {
 		&models.CartItem{},
 		&models.Order{},
 		&models.OrderItem{},
-		&models.BakongToken{},
 		&models.PPCBankToken{},
 		&models.PaymentMethod{},
 	)

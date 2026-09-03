@@ -41,11 +41,11 @@ func (s *SettingsService) Update(patch *models.Settings) (*models.Settings, erro
 	current.TelegramURL = patch.TelegramURL
 	current.LogoURL = patch.LogoURL
 	current.CashPaymentEnabled = patch.CashPaymentEnabled
-	current.BakongPaymentEnabled = patch.BakongPaymentEnabled
 	current.PPCBankPaymentEnabled = patch.PPCBankPaymentEnabled
 	current.Latitude = patch.Latitude
 	current.Longitude = patch.Longitude
 	current.DeliveryDistanceKm = patch.DeliveryDistanceKm
+	current.ShippingFee = patch.ShippingFee
 
 	if err := s.Settings.Update(current); err != nil {
 		return nil, err

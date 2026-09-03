@@ -8,7 +8,7 @@ import (
 
 const (
 	PaymentMethodCash    = "cash"
-	PaymentMethodBakong  = "bakong"
+	PaymentMethodBakong  = "bakong" // historical only — Bakong integration removed, this remains solely so existing orders still display correctly
 	PaymentMethodPPCBank = "ppcbank"
 )
 
@@ -37,16 +37,24 @@ const (
 //
 // PaymentStatus is deliberately separate from Status (order fulfillment
 // lifecycle) — a cash order can be "confirmed" while still "unpaid" (pay
-// on delivery), and a Bakong order's payment can be verified independent
-// of where the order is in fulfillment. PaymentReference is the MD5 hash
-// bakong-khqr returns at QR generation time — stored so an admin can later
-// re-verify payment via Bakong's check_transaction_by_md5 (see
-// OrderService.VerifyBakongPayment), not just trust what the customer's
+// on delivery), and a PPCBank order's payment can be verified independent
+// of where the order is in fulfillment. PaymentReference holds whatever
+// identifier the active payment method needs for later verification (for
+// PPCBank, this is the order's own billNumber — see
+// OrderService.VerifyPPCBankPayment), not just trust what the customer's
 // browser reported during checkout.
 type Order struct {
-	ID               uint    `json:"id" gorm:"primaryKey;autoIncrement"`
-	CustomerID       uint    `json:"customerId" gorm:"index;not null"`
-	Total            float64 `json:"total" gorm:"not null"`
+	ID         uint    `json:"id" gorm:"primaryKey;autoIncrement"`
+	CustomerID uint    `json:"customerId" gorm:"index;not null"`
+	Total      float64 `json:"total" gorm:"not null"`
+	// ShippingFee snapshots Settings.ShippingFee AT THE TIME this order
+	// was placed — not recomputed from current settings later, same
+	// reasoning as OrderItem snapshotting product price/name: if the
+	// admin changes the shipping fee tomorrow, an order placed today
+	// must still show what was actually charged, not today's new rate.
+	// Total already includes this amount; it's stored separately purely
+	// for transparency on receipts/admin view.
+	ShippingFee      float64 `json:"shippingFee" gorm:"not null;default:0"`
 	PaymentMethod    string  `json:"paymentMethod" gorm:"type:varchar(20);not null"` // "cash" | "bakong"
 	PaymentStatus    string  `json:"paymentStatus" gorm:"type:varchar(20);not null;default:unpaid"`
 	PaymentReference string  `json:"paymentReference" gorm:"type:varchar(50)"` // KHQR MD5 hash, empty for cash orders

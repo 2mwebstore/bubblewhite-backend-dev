@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"bubblewhite-backend/config"
 	"bubblewhite-backend/models"
@@ -45,6 +47,15 @@ func sendTelegramMessage(text string) {
 		return
 	}
 
+	// Logs the exact bytes being sent — settles definitively whether
+	// parse_mode is actually present in the outgoing request, rather
+	// than continuing to reason about it from the Go source alone. If
+	// this log line shows parse_mode:"HTML" present and Telegram STILL
+	// shows raw tags, the cause is genuinely on Telegram's side of
+	// interpreting this specific payload, not a missing/dropped field
+	// on ours.
+	log.Printf("telegram: sending payload: %s", string(body))
+
 	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		log.Printf("telegram: failed to send notification: %v", err)
@@ -68,19 +79,24 @@ func sendTelegramMessage(text string) {
 // NotifyOrderPaid sends a formatted order-paid alert to the configured
 // Telegram group — call this from every code path that transitions an
 // order's PaymentStatus to "paid" (OrderService.Checkout,
-// VerifyBakongPayment, VerifyPPCBankPayment). Runs in its own goroutine —
+// VerifyPPCBankPayment). Runs in its own goroutine —
 // the actual HTTP call to Telegram has real network latency, and nothing
 // here should ever add delay to the customer-facing checkout response
 // that's already succeeded by the time this is called.
 func NotifyOrderPaid(order *models.Order) {
 	// The order reference becomes a clickable link straight to its admin
 	// review page when FrontendBaseURL is configured — falls back to
-	// plain, non-clickable text otherwise, since a link built from an
-	// empty base URL would just be a broken "/admin/orders/42" with no
-	// domain, which is worse than no link at all.
+	// plain, non-clickable text otherwise. Validated properly, not just
+	// checked for non-empty: a value that's set but not a real absolute
+	// URL (e.g. accidental whitespace in the env file) would otherwise
+	// silently produce a broken relative link like "/admin/orders/42"
+	// with no domain at all — worse than no link, since it's not
+	// obviously broken to someone tapping it on their phone.
 	reference := order.Reference()
-	if config.Get().FrontendBaseURL != "" {
-		reviewURL := fmt.Sprintf("%s/admin/orders/%d", config.Get().FrontendBaseURL, order.ID)
+	baseURL := strings.TrimSpace(config.Get().FrontendBaseURL)
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
+		reviewURL := fmt.Sprintf("%s/admin/orders/%d", baseURL, order.ID)
 		reference = fmt.Sprintf(`<a href="%s">%s</a>`, reviewURL, order.Reference())
 	}
 
@@ -94,13 +110,21 @@ func NotifyOrderPaid(order *models.Order) {
 		reference,
 		paymentMethodLabel(order.PaymentMethod),
 		order.Total,
-		order.Phone,
-		order.Address,
+		// html.EscapeString on every customer-controlled field — Address
+		// in particular is free-text a customer typed, and Telegram's
+		// HTML parse mode treats unescaped <, >, or & as real markup. A
+		// single stray "<" in an address (a floor number written as
+		// "Building <5>", for instance) would break parsing for the
+		// ENTIRE message, not just that field — this is what protects
+		// against that regardless of what a customer actually types.
+		html.EscapeString(order.Phone),
+		html.EscapeString(order.Address),
 	)
 	// Invoice (the bank's own reference number — see Order.Invoice's doc
 	// comment) is only populated for PPCBank payments once verified, so
 	// this line is appended conditionally rather than always shown blank
-	// for Bakong/cash orders.
+	// for cash orders (or historical Bakong orders — that integration was
+	// removed, but Invoice would never have been populated for them anyway).
 	if order.Invoice != "" {
 		text += fmt.Sprintf("\n<b>លេខតម្រុយធនាគារ:</b> %s", order.Invoice)
 	}
