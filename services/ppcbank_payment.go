@@ -16,6 +16,7 @@ import (
 
 	"bubblewhite-backend/config"
 	"bubblewhite-backend/models"
+	"bubblewhite-backend/utils"
 
 	"gorm.io/gorm"
 )
@@ -336,7 +337,16 @@ func GeneratePPCBankKHQRPayment(billNumber string, amount float64, currencyCode 
 		"body": map[string]any{
 			"merchantCode": merchantCode,
 			"billNumber":   billNumber,
-			"amount":       amount,
+			// Rounded to exactly 2 decimal places before sending — Go's
+			// float64 arithmetic elsewhere (summing cart item prices plus
+			// the shipping fee) produces values like 30.490000000000002
+			// due to ordinary binary floating-point imprecision, not a
+			// bug in that arithmetic itself. PPCBank's API rejects
+			// amounts like that outright ("Amount is invalid",
+			// resultCode 000001) since no real currency has that many
+			// decimal places. This was confirmed by directly reproducing
+			// the exact failure with a realistic cart total before fixing it.
+			"amount":       utils.RoundMoney(amount),
 			"currencyCode": currencyCode,
 			// 5 minutes — matches the KHQR scan window already used for
 			// Bakong, for a consistent customer-facing experience across

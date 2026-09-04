@@ -120,7 +120,7 @@ func (s *OrderService) Checkout(customerID uint, paymentMethod, address, phone, 
 	if err != nil {
 		return nil, err
 	}
-	total := subtotal + settings.ShippingFee
+	total := utils.RoundMoney(subtotal + settings.ShippingFee)
 
 	order := &models.Order{
 		CustomerID:       customerID,
@@ -179,7 +179,7 @@ func (s *OrderService) InitiatePPCBankCheckout(customerID uint, address, phone s
 	if err != nil {
 		return nil, "", err
 	}
-	total := subtotal + settings.ShippingFee
+	total := utils.RoundMoney(subtotal + settings.ShippingFee)
 
 	order := &models.Order{
 		CustomerID:    customerID,

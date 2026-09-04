@@ -1,10 +1,25 @@
 package utils
 
 import (
+	"math"
 	"strings"
 
 	"github.com/google/uuid"
 )
+
+// RoundMoney rounds a float64 to exactly 2 decimal places — standard
+// currency precision. Ordinary float64 arithmetic (summing several cart
+// item prices, adding a shipping fee, etc.) routinely produces values
+// like 30.490000000000002 due to how binary floating point represents
+// decimal fractions — this is not a bug in that arithmetic, it's how
+// IEEE 754 floats fundamentally work, but external payment APIs (PPCBank
+// confirmed to reject amounts like that outright: "Amount is invalid",
+// resultCode 000001) and a database column both expect a clean 2-decimal
+// value. Call this anywhere a computed money total crosses a boundary —
+// stored in the database, sent to an external API, or displayed.
+func RoundMoney(amount float64) float64 {
+	return math.Round(amount*100) / 100
+}
 
 // Ptr returns a pointer to v — handy for optional struct fields like
 // Product.CompareAt (*float64) or Product.Badge (*string) in literals.
