@@ -24,13 +24,15 @@ type Settings struct {
 
 	LogoURL string `json:"logoUrl" gorm:"type:varchar(500)"`
 
-	// Payment method toggles — admin-controlled, checked both when the
-	// storefront decides which options to show AND server-side at
-	// checkout (never trust the frontend alone for something that gates
-	// what a customer can actually pay with). Cash defaults enabled since
-	// it needs no external integration; Bakong defaults disabled until an
-	// admin explicitly turns it on, since it depends on BAKONG_API_EMAIL
-	// etc. actually being configured correctly first.
+	// Legacy — no longer the source of truth for checkout. These were the
+	// original payment-method toggles before the PaymentMethod table (see
+	// /admin/payment_method) replaced them with a real, per-method record
+	// (enabled/primary/sortOrder/image). Kept here ONLY because
+	// seedPaymentMethods reads them once, on a brand-new database, to
+	// carry over whatever was set here before that table existed.
+	// Deliberately NOT in SettingsService.Update's whitelist anymore —
+	// editing them now would silently do nothing, since nothing else
+	// reads them after that one-time migration.
 	CashPaymentEnabled    bool `json:"cashPaymentEnabled" gorm:"not null;default:true"`
 	PPCBankPaymentEnabled bool `json:"ppcbankPaymentEnabled" gorm:"not null;default:false"`
 

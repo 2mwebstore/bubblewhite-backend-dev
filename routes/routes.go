@@ -1,7 +1,9 @@
 package routes
 
 import (
+	"bubblewhite-backend/config"
 	"bubblewhite-backend/controllers"
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/repositories"
 	"bubblewhite-backend/services"
 
@@ -30,6 +32,15 @@ type Container struct {
 	AdminCustomer  *controllers.AdminCustomerController
 	PPCBankWebhook *controllers.PPCBankWebhookController
 	PaymentMethod  *controllers.PaymentMethodController
+
+	// Stricter, dedicated rate limiters for endpoints that are actual
+	// abuse targets in a way general browsing isn't — repeated login
+	// attempts (credential stuffing/brute force) and repeated form
+	// submissions (spam) — kept separate from the global limiter applied
+	// to every route, which is deliberately generous since it has to
+	// cover legitimate browsing/shopping traffic too.
+	LoginRateLimiter   *middlewares.RateLimiter
+	ContactRateLimiter *middlewares.RateLimiter
 }
 
 // Build wires repositories -> services -> controllers. This is the single
@@ -64,6 +75,8 @@ func Build(db *gorm.DB) *Container {
 	customerService := services.NewCustomerService(customerRepo)
 	cartService := services.NewCartService(cartRepo, productRepo)
 	orderService := services.NewOrderService(orderRepo, cartRepo, productRepo, paymentMethodService, settingsRepo)
+	googleOAuthService := services.NewGoogleOAuthService(config.Get().GoogleClientID)
+	facebookOAuthService := services.NewFacebookOAuthService(config.Get().FacebookAppID, config.Get().FacebookAppSecret)
 
 	// Controllers
 	return &Container{
@@ -79,12 +92,24 @@ func Build(db *gorm.DB) *Container {
 		Contact:        controllers.NewContactController(contactService),
 		Upload:         controllers.NewUploadController(uploadService),
 		Banner:         controllers.NewBannerController(bannerService),
-		Customer:       controllers.NewCustomerController(customerService),
+		Customer:       controllers.NewCustomerController(customerService, googleOAuthService, facebookOAuthService),
 		Cart:           controllers.NewCartController(cartService),
 		Order:          controllers.NewOrderController(orderService),
 		AdminOrder:     controllers.NewAdminOrderController(orderService),
 		AdminCustomer:  controllers.NewAdminCustomerController(customerService),
 		PPCBankWebhook: controllers.NewPPCBankWebhookController(orderService),
+
+		// 6/minute allows a few genuine mistyped-password retries without
+		// friction, while still shutting down a sustained brute-force
+		// attempt long before it could work through any real password space.
+		LoginRateLimiter: middlewares.NewRateLimiter(6, 6, "ការព្យាយាមចូលច្រើនពេក សូមរង់ចាំបន្តិច។").
+			Name("login").
+			Allowlist(config.Get().RateLimitAllowlist...),
+		// 3/minute — a real visitor submits this form once, maybe twice
+		// if they made a typo; this is squarely aimed at scripted spam.
+		ContactRateLimiter: middlewares.NewRateLimiter(3, 3, "សូមរង់ចាំបន្តិចមុននឹងផ្ញើសារម្តងទៀត។").
+			Name("contact").
+			Allowlist(config.Get().RateLimitAllowlist...),
 	}
 }
 

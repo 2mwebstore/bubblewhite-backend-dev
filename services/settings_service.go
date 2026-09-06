@@ -40,8 +40,14 @@ func (s *SettingsService) Update(patch *models.Settings) (*models.Settings, erro
 	current.TiktokURL = patch.TiktokURL
 	current.TelegramURL = patch.TelegramURL
 	current.LogoURL = patch.LogoURL
-	current.CashPaymentEnabled = patch.CashPaymentEnabled
-	current.PPCBankPaymentEnabled = patch.PPCBankPaymentEnabled
+	// NOT current.CashPaymentEnabled / current.PPCBankPaymentEnabled —
+	// these two fields are now dead weight: the PaymentMethod table (see
+	// /admin/payment_method) replaced them as the actual source of truth
+	// for checkout, and they're only ever read once, during the one-time
+	// seed migration on a brand-new database. Leaving them editable here
+	// would silently do nothing while looking like a working toggle —
+	// worse than removing the fields outright, since the model still
+	// needs them for that migration path.
 	current.Latitude = patch.Latitude
 	current.Longitude = patch.Longitude
 	current.DeliveryDistanceKm = patch.DeliveryDistanceKm

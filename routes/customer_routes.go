@@ -8,8 +8,10 @@ import (
 
 func RegisterCustomerRoutes(api *gin.RouterGroup, c *Container) {
 	// Public — register/login for storefront shoppers.
-	api.POST("/customer/register", c.Customer.Register)
-	api.POST("/customer/login", c.Customer.Login)
+	api.POST("/customer/register", c.LoginRateLimiter.Middleware(), c.Customer.Register)
+	api.POST("/customer/login", c.LoginRateLimiter.Middleware(), c.Customer.Login)
+	api.POST("/customer/auth/google", c.LoginRateLimiter.Middleware(), c.Customer.GoogleLogin)
+	api.POST("/customer/auth/facebook", c.LoginRateLimiter.Middleware(), c.Customer.FacebookLogin)
 
 	me := api.Group("/customer/me")
 	me.Use(middlewares.CustomerAuthMiddleware())

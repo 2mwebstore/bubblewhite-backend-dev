@@ -8,7 +8,7 @@ import (
 
 func RegisterContactRoutes(api *gin.RouterGroup, c *Container) {
 	// Public — the storefront's Contact page form posts here.
-	api.POST("/contact", c.Contact.Submit)
+	api.POST("/contact", c.ContactRateLimiter.Middleware(), c.Contact.Submit)
 
 	admin := api.Group("/admin/contacts")
 	admin.Use(middlewares.AuthMiddleware())

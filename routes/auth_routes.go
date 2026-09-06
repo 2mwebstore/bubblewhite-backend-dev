@@ -8,7 +8,7 @@ import (
 
 func RegisterAuthRoutes(api *gin.RouterGroup, c *Container) {
 	auth := api.Group("/auth")
-	auth.POST("/login", c.Auth.Login)
+	auth.POST("/login", c.LoginRateLimiter.Middleware(), c.Auth.Login)
 
 	me := api.Group("/admin/me")
 	me.Use(middlewares.AuthMiddleware())

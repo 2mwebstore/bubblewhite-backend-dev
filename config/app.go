@@ -16,6 +16,26 @@ type Config struct {
 	Port        string
 	CORSOrigins []string
 
+	// IPs exempt from rate limiting entirely — e.g. your own office IP,
+	// or a monitoring/health-check service. Comma-separated, optional;
+	// empty means no exemptions.
+	RateLimitAllowlist []string
+
+	// Google/Facebook sign-in — see services/oauth_google.go and
+	// oauth_facebook.go. GoogleClientID must match the "aud" claim on every
+	// Google ID token this app accepts (see verifyGoogleIDToken) — without
+	// it correctly set, EVERY Google sign-in attempt fails closed, which is
+	// the safe default: a missing/misconfigured audience must never be
+	// treated as "accept any token".
+	GoogleClientID string
+	// FacebookAppID/FacebookAppSecret are used together to call Facebook's
+	// debug_token endpoint, which confirms an access token was actually
+	// issued to THIS app (not a token a malicious client obtained from a
+	// different Facebook app and is replaying here) — see
+	// oauth_facebook.go's VerifyAccessToken.
+	FacebookAppID     string
+	FacebookAppSecret string
+
 	DBHost     string
 	DBPort     string
 	DBUser     string
@@ -83,6 +103,12 @@ func LoadConfig() *Config {
 			AppEnv:      getEnv("APP_ENV", "development"),
 			Port:        getEnv("PORT", "8080"),
 			CORSOrigins: splitCSV(getEnv("CORS_ORIGINS", "http://localhost:5173")),
+
+			RateLimitAllowlist: splitCSV(getEnv("RATE_LIMIT_ALLOWLIST", "")),
+
+			GoogleClientID:    getEnv("GOOGLE_CLIENT_ID", ""),
+			FacebookAppID:     getEnv("FACEBOOK_APP_ID", ""),
+			FacebookAppSecret: getEnv("FACEBOOK_APP_SECRET", ""),
 
 			DBHost:     getEnv("DB_HOST", "127.0.0.1"),
 			DBPort:     getEnv("DB_PORT", "3306"),

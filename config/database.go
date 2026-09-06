@@ -65,5 +65,33 @@ func AutoMigrate(db *gorm.DB) {
 	if err != nil {
 		log.Fatalf("config: migration failed: %v", err)
 	}
+
+	relaxCustomerColumns(db)
+
 	log.Println("config: database migrated")
+}
+
+// relaxCustomerColumns drops the NOT NULL constraint on customers.phone and
+// customers.password_hash for databases that already existed before
+// Google/Facebook sign-in was added.
+//
+// GORM's AutoMigrate deliberately never loosens an existing column's
+// constraints on its own (only adds missing tables/columns/indexes) — a
+// brand-new database gets these columns created as nullable directly from
+// the Customer struct's tags above, but an already-deployed database still
+// has the original NOT NULL from before Phone/PasswordHash became
+// pointers. Without this, the very first Google/Facebook signup on an
+// existing deployment would fail at the database level with a NOT NULL
+// constraint violation, even though the Go code now treats both as
+// optional.
+//
+// Safe to run on every boot — MODIFY COLUMN re-applying the same
+// definition is a harmless no-op once already applied.
+func relaxCustomerColumns(db *gorm.DB) {
+	if err := db.Exec("ALTER TABLE customers MODIFY COLUMN phone VARCHAR(50) NULL").Error; err != nil {
+		log.Printf("config: could not relax customers.phone to nullable (safe to ignore on a brand-new database): %v", err)
+	}
+	if err := db.Exec("ALTER TABLE customers MODIFY COLUMN password_hash VARCHAR(255) NULL").Error; err != nil {
+		log.Printf("config: could not relax customers.password_hash to nullable (safe to ignore on a brand-new database): %v", err)
+	}
 }
