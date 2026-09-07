@@ -15,10 +15,11 @@ type CustomerController struct {
 	Service  *services.CustomerService
 	Google   *services.GoogleOAuthService
 	Facebook *services.FacebookOAuthService
+	Telegram *services.TelegramOAuthService
 }
 
-func NewCustomerController(s *services.CustomerService, google *services.GoogleOAuthService, facebook *services.FacebookOAuthService) *CustomerController {
-	return &CustomerController{Service: s, Google: google, Facebook: facebook}
+func NewCustomerController(s *services.CustomerService, google *services.GoogleOAuthService, facebook *services.FacebookOAuthService, telegram *services.TelegramOAuthService) *CustomerController {
+	return &CustomerController{Service: s, Google: google, Facebook: facebook, Telegram: telegram}
 }
 
 // customerJSON builds a consistent response shape across register/login/me/
@@ -234,6 +235,48 @@ func (ctrl *CustomerController) FacebookLogin(c *gin.Context) {
 			return
 		}
 		utils.InternalError(c, "failed to sign in with facebook")
+		return
+	}
+
+	token, err := utils.SignCustomerToken(customer.ID, customerTokenIdentifier(customer))
+	if err != nil {
+		utils.InternalError(c, "failed to sign in")
+		return
+	}
+	utils.OK(c, gin.H{"token": token, "customer": customerJSON(customer)})
+}
+
+// POST /api/customer/auth/telegram — public. Accepts the exact payload the
+// Telegram Login Widget calls its JS onauth callback with (id, first_name,
+// last_name, username, photo_url, auth_date, hash), independently
+// re-verifies the hash against this bot's own token (see
+// TelegramOAuthService.Verify — every field here is otherwise
+// attacker-controllable), then finds-or-creates the matching customer,
+// same as GoogleLogin/FacebookLogin.
+func (ctrl *CustomerController) TelegramLogin(c *gin.Context) {
+	var payload services.TelegramAuthPayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		utils.BadRequest(c, "invalid request body")
+		return
+	}
+
+	tgUser, err := ctrl.Telegram.Verify(payload)
+	if err != nil {
+		if errors.Is(err, services.ErrTelegramNotConfigured) {
+			utils.InternalError(c, "telegram sign-in is not available right now")
+			return
+		}
+		utils.Unauthorized(c, "មិនអាចផ្ទៀងផ្ទាត់គណនី Telegram បានទេ")
+		return
+	}
+
+	customer, err := ctrl.Service.LoginOrRegisterWithTelegram(tgUser.ID, tgUser.Name)
+	if err != nil {
+		if errors.Is(err, services.ErrCustomerInactive) {
+			utils.Forbidden(c, "គណនីនេះត្រូវបានផ្អាក សូមទាក់ទងមកយើង")
+			return
+		}
+		utils.InternalError(c, "failed to sign in with telegram")
 		return
 	}
 

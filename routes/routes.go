@@ -77,6 +77,11 @@ func Build(db *gorm.DB) *Container {
 	orderService := services.NewOrderService(orderRepo, cartRepo, productRepo, paymentMethodService, settingsRepo)
 	googleOAuthService := services.NewGoogleOAuthService(config.Get().GoogleClientID)
 	facebookOAuthService := services.NewFacebookOAuthService(config.Get().FacebookAppID, config.Get().FacebookAppSecret)
+	// Reuses the same bot token already configured for order notifications
+	// (see services/telegram_service.go) — one Telegram bot can both send
+	// messages to your group chat AND verify Login Widget sign-ins at the
+	// same time, no second bot needed.
+	telegramOAuthService := services.NewTelegramOAuthService(config.Get().TelegramBotToken)
 
 	// Controllers
 	return &Container{
@@ -92,7 +97,7 @@ func Build(db *gorm.DB) *Container {
 		Contact:        controllers.NewContactController(contactService),
 		Upload:         controllers.NewUploadController(uploadService),
 		Banner:         controllers.NewBannerController(bannerService),
-		Customer:       controllers.NewCustomerController(customerService, googleOAuthService, facebookOAuthService),
+		Customer:       controllers.NewCustomerController(customerService, googleOAuthService, facebookOAuthService, telegramOAuthService),
 		Cart:           controllers.NewCartController(cartService),
 		Order:          controllers.NewOrderController(orderService),
 		AdminOrder:     controllers.NewAdminOrderController(orderService),

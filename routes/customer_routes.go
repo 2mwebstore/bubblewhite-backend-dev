@@ -12,6 +12,7 @@ func RegisterCustomerRoutes(api *gin.RouterGroup, c *Container) {
 	api.POST("/customer/login", c.LoginRateLimiter.Middleware(), c.Customer.Login)
 	api.POST("/customer/auth/google", c.LoginRateLimiter.Middleware(), c.Customer.GoogleLogin)
 	api.POST("/customer/auth/facebook", c.LoginRateLimiter.Middleware(), c.Customer.FacebookLogin)
+	api.POST("/customer/auth/telegram", c.LoginRateLimiter.Middleware(), c.Customer.TelegramLogin)
 
 	me := api.Group("/customer/me")
 	me.Use(middlewares.CustomerAuthMiddleware())

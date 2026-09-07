@@ -178,6 +178,30 @@ func (s *CustomerService) LoginOrRegisterWithFacebook(facebookID, email, name st
 	return customer, nil
 }
 
+// LoginOrRegisterWithTelegram is simpler than the Google/Facebook
+// equivalents: Telegram never provides an email, so there's no
+// email-matching step to attempt — a customer either already has this
+// exact TelegramID linked, or this is a genuinely new customer. Someone
+// who registered with phone+password first and later signs in with
+// Telegram will end up with two separate accounts unless they're
+// manually linked (e.g. by an admin) — an inherent limitation of Telegram
+// not sharing an email to match against, not something this service can
+// work around.
+func (s *CustomerService) LoginOrRegisterWithTelegram(telegramID, name string) (*models.Customer, error) {
+	if customer, err := s.Customers.FindByTelegramID(telegramID); err == nil {
+		if !customer.IsActive {
+			return nil, ErrCustomerInactive
+		}
+		return customer, nil
+	}
+
+	customer := &models.Customer{Name: name, TelegramID: &telegramID, IsActive: true}
+	if err := s.Customers.Create(customer); err != nil {
+		return nil, err
+	}
+	return customer, nil
+}
+
 func (s *CustomerService) GetByID(id uint) (*models.Customer, error) {
 	return s.Customers.FindByID(id)
 }

@@ -45,3 +45,11 @@ func (r *CustomerRepository) FindByFacebookID(facebookID string) (*models.Custom
 	}
 	return &customer, nil
 }
+
+func (r *CustomerRepository) FindByTelegramID(telegramID string) (*models.Customer, error) {
+	var customer models.Customer
+	if err := r.DB.Where("telegram_id = ?", telegramID).First(&customer).Error; err != nil {
+		return nil, err
+	}
+	return &customer, nil
+}
