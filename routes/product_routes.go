@@ -16,6 +16,7 @@ func RegisterProductRoutes(api *gin.RouterGroup, c *Container) {
 	// Admin — protected by JWT + specific permission per action
 	admin := api.Group("/admin/products")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 	admin.POST("", middlewares.RequirePermission(c.DB, "product.create"), c.Product.Create)
 	admin.PUT("/:id", middlewares.RequirePermission(c.DB, "product.update"), c.Product.Update)
 	admin.DELETE("/:id", middlewares.RequirePermission(c.DB, "product.delete"), c.Product.Delete)

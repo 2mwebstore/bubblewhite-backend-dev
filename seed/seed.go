@@ -217,8 +217,8 @@ func seedSettings(db *gorm.DB) {
 
 	settings := models.Settings{
 		ID:             models.SettingsID,
-		CompanyName:    "Bubble White",
-		CompanyDetail:  "Bubble White ជាម៉ាកសម្លៀកបំពាក់នៅភ្នំពេញ ដែលផ្តល់នូវសម្លៀកបំពាក់ប្រចាំថ្ងៃដ៏សាមញ្ញ និងសុខស្រួល។",
+		CompanyName:    "BubbleWhite",
+		CompanyDetail:  "BubbleWhite ជាម៉ាកសម្លៀកបំពាក់នៅភ្នំពេញ ដែលផ្តល់នូវសម្លៀកបំពាក់ប្រចាំថ្ងៃដ៏សាមញ្ញ និងសុខស្រួល។",
 		ContactEmail:   "hello@bubblewhite.co",
 		ContactPhone:   "+855 12 345 678",
 		ContactAddress: "ភ្នំពេញ, កម្ពុជា",
@@ -293,35 +293,35 @@ func seedCatalog(db *gorm.DB) {
 
 	products := []models.Product{
 		{
-			ID: "bw-basic-tee", Name: "Bubble White អាវយឺតធម្មតា", Price: 19.99,
+			ID: "bw-basic-tee", Name: "BubbleWhite អាវយឺតធម្មតា", Price: 19.99,
 			CategoryID: "t-shirts", Badge: &badgeNew, Featured: false,
 			Sizes:       models.JSONColumn[[]string]{Data: []string{"S", "M", "L", "XL"}},
 			Images:      models.JSONColumn[[]string]{Data: []string{}},
 			Description: "អាវយឺតប្រចាំថ្ងៃធ្វើពីកប្បាសក្រាស់ស្តើងសមរម្យ។ ស្មើមុត ទន់ភ្លន់ ទំហំធំល្មម និងស្លាកគំនូរដេរតូចមួយនៅទ្រូង។",
 		},
 		{
-			ID: "bw-hoodie", Name: "Bubble White អាវហ៊ូឌី", Price: 39.99,
+			ID: "bw-hoodie", Name: "BubbleWhite អាវហ៊ូឌី", Price: 39.99,
 			CategoryID: "hoodies", Badge: &badgeNew, Featured: true,
 			Sizes:       models.JSONColumn[[]string]{Data: []string{"S", "M", "L", "XL"}},
 			Images:      models.JSONColumn[[]string]{Data: []string{}},
 			Description: "អាវហ៊ូឌីរោមកម្រាស់មធ្យម មានពាក់ក្បាលមានស្រទាប់ក្នុង ស្មាទម្លាក់ និងស្លាកគំនូរនៅទ្រូង។",
 		},
 		{
-			ID: "bw-oversize-tee", Name: "Bubble White អាវយឺតធំ", Price: 24.99,
+			ID: "bw-oversize-tee", Name: "BubbleWhite អាវយឺតធំ", Price: 24.99,
 			CategoryID: "t-shirts", Featured: true,
 			Sizes:       models.JSONColumn[[]string]{Data: []string{"S", "M", "L", "XL"}},
 			Images:      models.JSONColumn[[]string]{Data: []string{}},
 			Description: "ម៉ូតធំទូលាយ ស្មាទម្លាក់ និងគំនូរដិតធំនៅមុខអាវ។",
 		},
 		{
-			ID: "bw-sweatshirt", Name: "Bubble White អាវយឺតកក់ក្តៅ", Price: 35.99,
+			ID: "bw-sweatshirt", Name: "BubbleWhite អាវយឺតកក់ក្តៅ", Price: 35.99,
 			CompareAt: &sweatshirtCompareAt, CategoryID: "men", Badge: &badgeDiscount, Featured: false,
 			Sizes:       models.JSONColumn[[]string]{Data: []string{"S", "M", "L", "XL"}},
 			Images:      models.JSONColumn[[]string]{Data: []string{}},
 			Description: "អាវយឺតកក់ក្តៅក របូបខាងក្នុងទន់ភ្លន់។",
 		},
 		{
-			ID: "bw-cap", Name: "Bubble White មួកកាប់", Price: 14.99,
+			ID: "bw-cap", Name: "BubbleWhite មួកកាប់", Price: 14.99,
 			CategoryID: "accessories", Featured: true,
 			Sizes:       models.JSONColumn[[]string]{Data: []string{"One Size"}},
 			Images:      models.JSONColumn[[]string]{Data: []string{}},
@@ -344,8 +344,8 @@ func seedBanners(db *gorm.DB) {
 	}
 
 	banners := []models.Banner{
-		{ImageURL: "", Alt: "Bubble White — Minimal style, maximum comfort", SortOrder: 1, IsActive: false},
-		{ImageURL: "", Alt: "Bubble White new collection", SortOrder: 2, IsActive: false},
+		{ImageURL: "", Alt: "BubbleWhite — Minimal style, maximum comfort", SortOrder: 1, IsActive: false},
+		{ImageURL: "", Alt: "BubbleWhite new collection", SortOrder: 2, IsActive: false},
 	}
 	if err := db.Create(&banners).Error; err != nil {
 		log.Printf("seed: failed to insert banners: %v", err)

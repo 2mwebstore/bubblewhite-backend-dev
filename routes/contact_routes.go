@@ -12,6 +12,7 @@ func RegisterContactRoutes(api *gin.RouterGroup, c *Container) {
 
 	admin := api.Group("/admin/contacts")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 	admin.GET("", middlewares.RequirePermission(c.DB, "contact.view"), c.Contact.List)
 	admin.PATCH("/:id/read", middlewares.RequirePermission(c.DB, "contact.manage"), c.Contact.MarkRead)
 	admin.DELETE("/:id", middlewares.RequirePermission(c.DB, "contact.manage"), c.Contact.Delete)

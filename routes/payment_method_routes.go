@@ -13,6 +13,7 @@ func RegisterPaymentMethodRoutes(api *gin.RouterGroup, c *Container) {
 
 	admin := api.Group("/admin/payment-methods")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 	admin.GET("", middlewares.RequirePermission(c.DB, "payment_method.view"), c.PaymentMethod.List)
 	admin.GET("/:id", middlewares.RequirePermission(c.DB, "payment_method.view"), c.PaymentMethod.GetByID)
 	admin.PUT("/:id", middlewares.RequirePermission(c.DB, "payment_method.update"), c.PaymentMethod.Update)

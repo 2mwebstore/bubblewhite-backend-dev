@@ -3,6 +3,7 @@ package controllers
 import (
 	"errors"
 
+	"bubblewhite-backend/config"
 	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/services"
@@ -15,11 +16,11 @@ type CustomerController struct {
 	Service  *services.CustomerService
 	Google   *services.GoogleOAuthService
 	Facebook *services.FacebookOAuthService
-	Telegram *services.TelegramOAuthService
+	Otp      *services.OtpService
 }
 
-func NewCustomerController(s *services.CustomerService, google *services.GoogleOAuthService, facebook *services.FacebookOAuthService, telegram *services.TelegramOAuthService) *CustomerController {
-	return &CustomerController{Service: s, Google: google, Facebook: facebook, Telegram: telegram}
+func NewCustomerController(s *services.CustomerService, google *services.GoogleOAuthService, facebook *services.FacebookOAuthService, otp *services.OtpService) *CustomerController {
+	return &CustomerController{Service: s, Google: google, Facebook: facebook, Otp: otp}
 }
 
 // customerJSON builds a consistent response shape across register/login/me/
@@ -43,6 +44,14 @@ func customerJSON(customer *models.Customer) gin.H {
 		"email":     email,
 		"isActive":  customer.IsActive,
 		"createdAt": customer.CreatedAt,
+		// Lets the frontend's change-password form know whether to ask
+		// for a "current password" at all — a customer who only ever
+		// signed up via Google/Facebook has none, and requiring one
+		// there would block them from ever setting a local password in
+		// the first place (see CustomerService.ChangePassword, which
+		// already handles this correctly server-side; this field is what
+		// lets the UI match that instead of contradicting it).
+		"hasPassword": customer.PasswordHash != nil,
 	}
 }
 
@@ -69,6 +78,13 @@ type registerInput struct {
 	Phone    string `json:"phone" validate:"required"`
 	Email    string `json:"email" validate:"omitempty,email"`
 	Password string `json:"password" validate:"required,min=6"`
+	// VerificationToken proves this exact phone was just confirmed via
+	// OTP — required on every registration now, not optional, per this
+	// project's own decision to require phone verification for every
+	// new account regardless of how they otherwise sign up (Google/
+	// Facebook accounts don't go through this handler at all, since
+	// those providers already verify identity their own way).
+	VerificationToken string `json:"verificationToken" validate:"required"`
 }
 
 // POST /api/customer/register — public
@@ -83,7 +99,18 @@ func (ctrl *CustomerController) Register(c *gin.Context) {
 		return
 	}
 
-	customer, err := ctrl.Service.Register(in.Name, in.Phone, in.Email, in.Password)
+	phone, err := utils.NormalizeCambodianPhone(in.Phone)
+	if err != nil {
+		utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទមិនត្រឹមត្រូវ"})
+		return
+	}
+
+	if err := ctrl.Otp.ConsumeVerificationToken(in.VerificationToken, phone); err != nil {
+		utils.FailWithErrors(c, map[string]string{"phone": "សូមផ្ទៀងផ្ទាត់លេខទូរស័ព្ទរបស់អ្នកសិន"})
+		return
+	}
+
+	customer, err := ctrl.Service.Register(in.Name, phone, in.Email, in.Password)
 	if err != nil {
 		if errors.Is(err, services.ErrPhoneAlreadyRegistered) {
 			utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទនេះបានចុះឈ្មោះរួចហើយ"})
@@ -246,37 +273,128 @@ func (ctrl *CustomerController) FacebookLogin(c *gin.Context) {
 	utils.OK(c, gin.H{"token": token, "customer": customerJSON(customer)})
 }
 
-// POST /api/customer/auth/telegram — public. Accepts the exact payload the
-// Telegram Login Widget calls its JS onauth callback with (id, first_name,
-// last_name, username, photo_url, auth_date, hash), independently
-// re-verifies the hash against this bot's own token (see
-// TelegramOAuthService.Verify — every field here is otherwise
-// attacker-controllable), then finds-or-creates the matching customer,
-// same as GoogleLogin/FacebookLogin.
-func (ctrl *CustomerController) TelegramLogin(c *gin.Context) {
-	var payload services.TelegramAuthPayload
-	if err := c.ShouldBindJSON(&payload); err != nil {
+type otpRequestInput struct {
+	Phone string `json:"phone" validate:"required"`
+}
+
+// POST /api/customer/otp/request — public. Tries the free Telegram
+// channel first (either sending directly if this phone already has a
+// linked chat, or returning a deep-link URL for the customer to tap
+// through) — see OtpService.RequestOTP for the full channel-selection
+// logic. Never falls back to paid SMS automatically; that's the
+// customer's own explicit choice via RequestOTPBySMS below.
+func (ctrl *CustomerController) RequestOTP(c *gin.Context) {
+	var in otpRequestInput
+	if err := c.ShouldBindJSON(&in); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-
-	tgUser, err := ctrl.Telegram.Verify(payload)
-	if err != nil {
-		if errors.Is(err, services.ErrTelegramNotConfigured) {
-			utils.InternalError(c, "telegram sign-in is not available right now")
-			return
-		}
-		utils.Unauthorized(c, "មិនអាចផ្ទៀងផ្ទាត់គណនី Telegram បានទេ")
+	if errs, _ := utils.ValidateStruct(in); errs != nil {
+		utils.FailWithErrors(c, errs)
 		return
 	}
 
-	customer, err := ctrl.Service.LoginOrRegisterWithTelegram(tgUser.ID, tgUser.Name)
+	phone, err := utils.NormalizeCambodianPhone(in.Phone)
 	if err != nil {
+		utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទមិនត្រឹមត្រូវ"})
+		return
+	}
+
+	result, err := ctrl.Otp.RequestOTP(phone, config.Get().TelegramBotUsername)
+	if err != nil {
+		utils.InternalError(c, "failed to send verification code")
+		return
+	}
+	utils.OK(c, gin.H{"channel": result.Channel, "telegramLinkUrl": result.TelegramLinkURL})
+}
+
+// POST /api/customer/otp/request-sms — public. The customer's own
+// explicit fallback choice (no Telegram installed, or just a preference)
+// — deliberately a separate, deliberate action rather than an automatic
+// fallback from RequestOTP, since every call here costs real money
+// through Plasgate.
+func (ctrl *CustomerController) RequestOTPBySMS(c *gin.Context) {
+	var in otpRequestInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		utils.BadRequest(c, "invalid request body")
+		return
+	}
+	if errs, _ := utils.ValidateStruct(in); errs != nil {
+		utils.FailWithErrors(c, errs)
+		return
+	}
+
+	phone, err := utils.NormalizeCambodianPhone(in.Phone)
+	if err != nil {
+		utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទមិនត្រឹមត្រូវ"})
+		return
+	}
+
+	if err := ctrl.Otp.RequestSMSFallback(phone); err != nil {
+		utils.InternalError(c, "failed to send verification code")
+		return
+	}
+	utils.OK(c, gin.H{"channel": "sms"})
+}
+
+type otpVerifyInput struct {
+	Phone string `json:"phone" validate:"required"`
+	Code  string `json:"code" validate:"required"`
+}
+
+// POST /api/customer/otp/verify — public. Checks the submitted code, then
+// branches on whether an account already exists for this (now-proven)
+// phone number:
+//   - existing account: logs them in directly, same {token, customer}
+//     shape as every other login endpoint.
+//   - no account yet: returns a verificationToken instead — the frontend
+//     then shows a "complete your profile" (name + password) screen and
+//     submits to /customer/register with this token, which
+//     Register validates before creating the account (see that
+//     handler and OtpService.ConsumeVerificationToken for why a bare
+//     "this phone was verified" claim isn't enough on its own).
+func (ctrl *CustomerController) VerifyOTP(c *gin.Context) {
+	var in otpVerifyInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		utils.BadRequest(c, "invalid request body")
+		return
+	}
+	if errs, _ := utils.ValidateStruct(in); errs != nil {
+		utils.FailWithErrors(c, errs)
+		return
+	}
+
+	phone, err := utils.NormalizeCambodianPhone(in.Phone)
+	if err != nil {
+		utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទមិនត្រឹមត្រូវ"})
+		return
+	}
+
+	verificationToken, err := ctrl.Otp.VerifyOTP(phone, in.Code)
+	if err != nil {
+		if errors.Is(err, services.ErrOtpTooManyAttempts) {
+			utils.Forbidden(c, "ព្យាយាមខុសច្រើនដងពេក សូមស្នើសុំលេខកូដថ្មី")
+			return
+		}
+		if errors.Is(err, services.ErrOtpExpiredOrNotFound) {
+			utils.BadRequest(c, "លេខកូដបានផុតកំណត់ ឬមិនទាន់ស្នើសុំ សូមព្យាយាមម្តងទៀត")
+			return
+		}
+		utils.BadRequest(c, "លេខកូដមិនត្រឹមត្រូវ")
+		return
+	}
+
+	customer, err := ctrl.Service.LoginWithVerifiedPhone(phone)
+	if err != nil {
+		if errors.Is(err, services.ErrNoAccountForPhone) {
+			utils.OK(c, gin.H{"needsRegistration": true, "verificationToken": verificationToken})
+			return
+		}
 		if errors.Is(err, services.ErrCustomerInactive) {
 			utils.Forbidden(c, "គណនីនេះត្រូវបានផ្អាក សូមទាក់ទងមកយើង")
 			return
 		}
-		utils.InternalError(c, "failed to sign in with telegram")
+		utils.InternalError(c, "failed to sign in")
 		return
 	}
 
@@ -320,10 +438,25 @@ func (ctrl *CustomerController) UpdateProfile(c *gin.Context) {
 
 	customerID := middlewares.CurrentCustomerID(c)
 
+	// Normalized when provided (see utils.NormalizeCambodianPhone's own
+	// comment for why this matters for OTP login specifically) — but
+	// Phone is optional here (a Google/Facebook customer may not have
+	// one yet), so an empty value is passed through unchanged rather
+	// than rejected.
+	phone := in.Phone
+	if phone != "" {
+		normalized, err := utils.NormalizeCambodianPhone(phone)
+		if err != nil {
+			utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទមិនត្រឹមត្រូវ"})
+			return
+		}
+		phone = normalized
+	}
+
 	customer, err := ctrl.Service.UpdateProfile(
 		customerID,
 		in.Name,
-		in.Phone,
+		phone,
 		in.Email,
 	)
 
@@ -350,7 +483,13 @@ func (ctrl *CustomerController) UpdateProfile(c *gin.Context) {
 }
 
 type customerChangePasswordInput struct {
-	CurrentPassword string `json:"currentPassword" validate:"required"`
+	// omitempty, not required — a customer who only ever signed up via
+	// Google/Facebook has no existing password to provide (see
+	// CustomerService.ChangePassword, which correctly skips verification
+	// when PasswordHash is nil to let them set one for the first time).
+	// Marking this required would block exactly that case at validation,
+	// before the service's own handling of it is ever reached.
+	CurrentPassword string `json:"currentPassword" validate:"omitempty"`
 	NewPassword     string `json:"newPassword" validate:"required,min=6"`
 }
 

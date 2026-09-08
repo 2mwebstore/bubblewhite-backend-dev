@@ -9,6 +9,7 @@ import (
 func RegisterRoleRoutes(api *gin.RouterGroup, c *Container) {
 	admin := api.Group("/admin/roles")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 
 	admin.GET("", middlewares.RequirePermission(c.DB, "role.view"), c.Role.List)
 	admin.POST("", middlewares.RequirePermission(c.DB, "role.create"), c.Role.Create)
@@ -17,5 +18,5 @@ func RegisterRoleRoutes(api *gin.RouterGroup, c *Container) {
 
 	// Lets the admin UI render a checklist of every grantable permission
 	// when creating/editing a role.
-	api.GET("/admin/permissions", middlewares.AuthMiddleware(), middlewares.RequirePermission(c.DB, "role.view"), c.Role.ListPermissions)
+	api.GET("/admin/permissions", middlewares.AuthMiddleware(), c.AdminRateLimiter.Middleware(), middlewares.RequirePermission(c.DB, "role.view"), c.Role.ListPermissions)
 }

@@ -48,9 +48,20 @@ func main() {
 	// scripted flood. Skips the PPCBank webhook path — see
 	// RateLimiter.SkipPaths' own comment for why that endpoint needs to
 	// be exempt rather than just given a higher number.
+	//
+	// Also skips /api/admin/ — every admin route already sits behind its
+	// own dedicated AdminRateLimiter (600/min, burst 120 — see routes.go),
+	// deliberately more generous than this global limit since real admin
+	// work is bursty in a way ordinary browsing isn't. Without this skip,
+	// that more generous limiter would be silently pointless: both
+	// middlewares run on every admin request, and the STRICTER one always
+	// wins — an admin doing bulk work would still get capped at this
+	// limiter's 300/min regardless of the 600/min ceiling meant to cover
+	// them, since this one runs first and rejects before AdminRateLimiter
+	// is ever reached.
 	globalLimiter := middlewares.NewRateLimiter(300, 60, "សំណើច្រើនពេក សូមព្យាយាមម្តងទៀតក្នុងពេលឆាប់ៗនេះ។").
 		Name("global").
-		SkipPaths("/api/webhooks/").
+		SkipPaths("/api/webhooks/", "/api/admin/").
 		Allowlist(cfg.RateLimitAllowlist...)
 	r.Use(globalLimiter.Middleware())
 
@@ -96,7 +107,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Bubble White API listening on :%s (env=%s)", port, cfg.AppEnv)
+		log.Printf("BubbleWhite API listening on :%s (env=%s)", port, cfg.AppEnv)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}

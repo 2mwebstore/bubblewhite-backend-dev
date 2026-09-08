@@ -31,6 +31,7 @@ type Container struct {
 	AdminOrder     *controllers.AdminOrderController
 	AdminCustomer  *controllers.AdminCustomerController
 	PPCBankWebhook *controllers.PPCBankWebhookController
+	TelegramBot    *controllers.TelegramBotController
 	PaymentMethod  *controllers.PaymentMethodController
 
 	// Stricter, dedicated rate limiters for endpoints that are actual
@@ -41,6 +42,22 @@ type Container struct {
 	// cover legitimate browsing/shopping traffic too.
 	LoginRateLimiter   *middlewares.RateLimiter
 	ContactRateLimiter *middlewares.RateLimiter
+	// AdminRateLimiter sits on every /admin/** route group, on top of the
+	// global limiter — a second, admin-specific ceiling so a single
+	// compromised staff token or a runaway script can't hammer the API
+	// indefinitely just because it's authenticated. Deliberately more
+	// generous than the global limiter (real admin work — bulk product
+	// edits, CSV-style imports done one row at a time, paging through a
+	// large order list) is bursty in a way ordinary storefront browsing
+	// isn't, and admins are a small, known set of people, not the general
+	// public the global limiter has to stay conservative for.
+	AdminRateLimiter *middlewares.RateLimiter
+	// CheckoutRateLimiter targets order creation specifically — a genuine
+	// high-value target (spamming orders to exhaust inventory, or
+	// repeatedly re-initiating PPCBank payment sessions) that the global
+	// limiter alone doesn't call out. A real customer checks out once,
+	// maybe retries a couple of times if a payment attempt fails.
+	CheckoutRateLimiter *middlewares.RateLimiter
 }
 
 // Build wires repositories -> services -> controllers. This is the single
@@ -77,11 +94,11 @@ func Build(db *gorm.DB) *Container {
 	orderService := services.NewOrderService(orderRepo, cartRepo, productRepo, paymentMethodService, settingsRepo)
 	googleOAuthService := services.NewGoogleOAuthService(config.Get().GoogleClientID)
 	facebookOAuthService := services.NewFacebookOAuthService(config.Get().FacebookAppID, config.Get().FacebookAppSecret)
-	// Reuses the same bot token already configured for order notifications
-	// (see services/telegram_service.go) — one Telegram bot can both send
-	// messages to your group chat AND verify Login Widget sign-ins at the
-	// same time, no second bot needed.
-	telegramOAuthService := services.NewTelegramOAuthService(config.Get().TelegramBotToken)
+
+	otpRepo := repositories.NewOtpRepository(db)
+	telegramLinkRepo := repositories.NewTelegramPhoneLinkRepository(db)
+	plasgateSMS := services.NewPlasgateSMSService(config.Get().PlasgatePrivateKey, config.Get().PlasgateSecretKey, config.Get().PlasgateSenderID)
+	otpService := services.NewOtpService(otpRepo, telegramLinkRepo, plasgateSMS)
 
 	// Controllers
 	return &Container{
@@ -97,12 +114,13 @@ func Build(db *gorm.DB) *Container {
 		Contact:        controllers.NewContactController(contactService),
 		Upload:         controllers.NewUploadController(uploadService),
 		Banner:         controllers.NewBannerController(bannerService),
-		Customer:       controllers.NewCustomerController(customerService, googleOAuthService, facebookOAuthService, telegramOAuthService),
+		Customer:       controllers.NewCustomerController(customerService, googleOAuthService, facebookOAuthService, otpService),
 		Cart:           controllers.NewCartController(cartService),
 		Order:          controllers.NewOrderController(orderService),
 		AdminOrder:     controllers.NewAdminOrderController(orderService),
 		AdminCustomer:  controllers.NewAdminCustomerController(customerService),
 		PPCBankWebhook: controllers.NewPPCBankWebhookController(orderService),
+		TelegramBot:    controllers.NewTelegramBotController(otpService),
 
 		// 6/minute allows a few genuine mistyped-password retries without
 		// friction, while still shutting down a sustained brute-force
@@ -114,6 +132,23 @@ func Build(db *gorm.DB) *Container {
 		// if they made a typo; this is squarely aimed at scripted spam.
 		ContactRateLimiter: middlewares.NewRateLimiter(3, 3, "សូមរង់ចាំបន្តិចមុននឹងផ្ញើសារម្តងទៀត។").
 			Name("contact").
+			Allowlist(config.Get().RateLimitAllowlist...),
+		// 600/minute, burst 120 — well above the global limiter's 300,
+		// deliberately: real admin work (bulk edits, paging a large list,
+		// uploading several images in a row) is bursty in a way ordinary
+		// storefront browsing isn't, and this only ever applies to a
+		// small, known set of staff accounts, not the general public.
+		// Still a real ceiling — a compromised token or a runaway script
+		// hitting the API in a tight loop gets capped, not left
+		// unbounded just because it's authenticated.
+		AdminRateLimiter: middlewares.NewRateLimiter(600, 120, "សំណើច្រើនពេក សូមរង់ចាំបន្តិច។").
+			Name("admin").
+			Allowlist(config.Get().RateLimitAllowlist...),
+		// 10/minute — a real customer checks out once per visit, maybe a
+		// couple of times if PPCBank's redirect flow needs retrying; this
+		// targets scripted order spam, not normal shopping.
+		CheckoutRateLimiter: middlewares.NewRateLimiter(10, 10, "សូមរង់ចាំបន្តិចមុននឹងព្យាយាមម្តងទៀត។").
+			Name("checkout").
 			Allowlist(config.Get().RateLimitAllowlist...),
 	}
 }

@@ -76,6 +76,20 @@ type Config struct {
 	// an enhancement, not something checkout should ever depend on.
 	TelegramBotToken string
 	TelegramChatID   string
+	// TelegramBotUsername is public (needed to build the t.me/<username>
+	// deep link returned to the frontend by CustomerController.RequestOTP)
+	// — distinct from TelegramBotToken, which stays backend-only.
+	TelegramBotUsername string
+
+	// Plasgate — Cambodia's largest SMS gateway, used as the paid
+	// fallback for OTP delivery when a customer has no Telegram linked
+	// (see services/sms_plasgate.go and services/otp_service.go).
+	// PrivateKey/SecretKey come from the Plasgate account dashboard;
+	// SenderID is the "from" name recipients see (subject to Plasgate's
+	// own sender-ID registration rules for Cambodia).
+	PlasgatePrivateKey string
+	PlasgateSecretKey  string
+	PlasgateSenderID   string
 
 	// FrontendBaseURL is the storefront's public origin (e.g.
 	// "https://bubblewhite.co", no trailing slash) — used to build real,
@@ -142,9 +156,14 @@ func LoadConfig() *Config {
 			PPCBankSuccessURL:   getEnv("PPCBANK_SUCCESS_URL", ""),
 			PPCBankErrorURL:     getEnv("PPCBANK_ERROR_URL", ""),
 
-			TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
-			TelegramChatID:   getEnv("TELEGRAM_CHAT_ID", ""),
-			FrontendBaseURL:  getEnv("FRONTEND_BASE_URL", ""),
+			TelegramBotToken:    getEnv("TELEGRAM_BOT_TOKEN", ""),
+			TelegramChatID:      getEnv("TELEGRAM_CHAT_ID", ""),
+			TelegramBotUsername: getEnv("TELEGRAM_BOT_USERNAME", ""),
+
+			PlasgatePrivateKey: getEnv("PLASGATE_PRIVATE_KEY", ""),
+			PlasgateSecretKey:  getEnv("PLASGATE_SECRET_KEY", ""),
+			PlasgateSenderID:   getEnv("PLASGATE_SENDER_ID", ""),
+			FrontendBaseURL:    getEnv("FRONTEND_BASE_URL", ""),
 		}
 	})
 	return instance

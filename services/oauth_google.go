@@ -78,6 +78,18 @@ func (g *GoogleOAuthService) getKey(kid string) (*rsa.PublicKey, error) {
 	}
 
 	if err := g.refreshKeysLocked(); err != nil {
+		// A transient network issue fetching Google's certs shouldn't
+		// fail every login outright if we already have a (now
+		// past-TTL, but not necessarily wrong) key for this exact kid
+		// from a previous successful fetch — Google's signing keys
+		// aren't revoked the instant they're rotated out, they stay
+		// valid for a grace period specifically so in-flight tokens
+		// keep verifying. Falling back here trades a small amount of
+		// key-rotation staleness for not taking login down every time
+		// this one outbound call has a bad moment.
+		if key, ok := g.keys[kid]; ok {
+			return key, nil
+		}
 		return nil, err
 	}
 

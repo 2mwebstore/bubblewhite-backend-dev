@@ -12,6 +12,7 @@ func RegisterBannerRoutes(api *gin.RouterGroup, c *Container) {
 
 	admin := api.Group("/admin/banners")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 	admin.GET("", middlewares.RequirePermission(c.DB, "banner.view"), c.Banner.List)
 	admin.POST("", middlewares.RequirePermission(c.DB, "banner.create"), c.Banner.Create)
 	admin.PUT("/:id", middlewares.RequirePermission(c.DB, "banner.update"), c.Banner.Update)

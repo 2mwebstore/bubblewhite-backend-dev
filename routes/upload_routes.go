@@ -9,6 +9,7 @@ import (
 func RegisterUploadRoutes(api *gin.RouterGroup, c *Container) {
 	admin := api.Group("/admin/uploads")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 
 	admin.POST("/products", middlewares.RequirePermission(c.DB, "product.update"), c.Upload.UploadProductImage)
 	admin.POST("/categories", middlewares.RequirePermission(c.DB, "category.update"), c.Upload.UploadCategoryImage)

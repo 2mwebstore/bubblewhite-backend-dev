@@ -9,6 +9,7 @@ import (
 func RegisterAdminOrderRoutes(api *gin.RouterGroup, c *Container) {
 	orders := api.Group("/admin/orders")
 	orders.Use(middlewares.AuthMiddleware())
+	orders.Use(c.AdminRateLimiter.Middleware())
 	orders.GET("", middlewares.RequirePermission(c.DB, "order.view"), c.AdminOrder.List)
 	orders.GET("/:id", middlewares.RequirePermission(c.DB, "order.view"), c.AdminOrder.GetByID)
 	orders.PATCH("/:id/status", middlewares.RequirePermission(c.DB, "order.manage"), c.AdminOrder.UpdateStatus)

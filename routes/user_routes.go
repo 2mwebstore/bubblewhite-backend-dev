@@ -9,6 +9,7 @@ import (
 func RegisterUserRoutes(api *gin.RouterGroup, c *Container) {
 	admin := api.Group("/admin/users")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 
 	admin.GET("", middlewares.RequirePermission(c.DB, "user.view"), c.User.List)
 	admin.GET("/:id", middlewares.RequirePermission(c.DB, "user.view"), c.User.GetByID)

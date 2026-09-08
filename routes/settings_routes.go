@@ -12,5 +12,6 @@ func RegisterSettingsRoutes(api *gin.RouterGroup, c *Container) {
 
 	admin := api.Group("/admin/settings")
 	admin.Use(middlewares.AuthMiddleware())
+	admin.Use(c.AdminRateLimiter.Middleware())
 	admin.PUT("", middlewares.RequirePermission(c.DB, "settings.update"), c.Settings.Update)
 }

@@ -34,6 +34,17 @@ var ErrCustomerInactive = errors.New("this account has been disabled")
 // consumer storefront like this one.
 var ErrOAuthAccountNoPassword = errors.New("this account signs in with google or facebook")
 
+// ErrNoAccountForPhone is distinct from ErrInvalidCustomerCredentials
+// deliberately: unlike password login, where the person typing a phone/
+// email hasn't proven they own it (so confirming whether it's registered
+// is a real, if minor, information leak worth avoiding), OTP login only
+// ever reaches this check after the caller has ALREADY proven ownership
+// of the phone via a verified code. There's no privacy cost to telling
+// them plainly that no account exists yet — it just lets the frontend
+// smoothly offer "complete your registration" instead of a confusing
+// generic failure.
+var ErrNoAccountForPhone = errors.New("no account exists for this phone number")
+
 // Register creates a new customer account. Phone is required and must be
 // unique; email is optional (nil when not given, so multiple customers can
 // have no email without colliding on the unique index — see Customer's doc
@@ -178,26 +189,29 @@ func (s *CustomerService) LoginOrRegisterWithFacebook(facebookID, email, name st
 	return customer, nil
 }
 
-// LoginOrRegisterWithTelegram is simpler than the Google/Facebook
-// equivalents: Telegram never provides an email, so there's no
-// email-matching step to attempt — a customer either already has this
-// exact TelegramID linked, or this is a genuinely new customer. Someone
-// who registered with phone+password first and later signs in with
-// Telegram will end up with two separate accounts unless they're
-// manually linked (e.g. by an admin) — an inherent limitation of Telegram
-// not sharing an email to match against, not something this service can
-// work around.
-func (s *CustomerService) LoginOrRegisterWithTelegram(telegramID, name string) (*models.Customer, error) {
-	if customer, err := s.Customers.FindByTelegramID(telegramID); err == nil {
-		if !customer.IsActive {
-			return nil, ErrCustomerInactive
+// LoginWithVerifiedPhone logs in an existing customer purely on the
+// strength of a phone that's already been proven via OTP (see
+// OtpService.ConsumeVerificationToken, which the caller must have
+// already checked before this is ever called) — no password check at
+// all, since a successfully verified OTP already established identity
+// just as strongly as a password would have. Returns ErrNoAccountForPhone
+// (not ErrInvalidCustomerCredentials) if no customer has this phone at
+// all — see that error's own doc comment for why this case is safe to be
+// explicit about here specifically.
+func (s *CustomerService) LoginWithVerifiedPhone(phone string) (*models.Customer, error) {
+	customer, err := s.Customers.FindByPhone(phone)
+	if err != nil {
+		// Fall back to the local (0-prefixed) form — an account
+		// registered before phone numbers were normalized consistently
+		// may still have Phone stored that way. See utils.LocalVariant's
+		// own doc comment for why this exists.
+		customer, err = s.Customers.FindByPhone(utils.LocalVariant(phone))
+		if err != nil {
+			return nil, ErrNoAccountForPhone
 		}
-		return customer, nil
 	}
-
-	customer := &models.Customer{Name: name, TelegramID: &telegramID, IsActive: true}
-	if err := s.Customers.Create(customer); err != nil {
-		return nil, err
+	if !customer.IsActive {
+		return nil, ErrCustomerInactive
 	}
 	return customer, nil
 }
