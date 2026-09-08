@@ -15,6 +15,9 @@ import (
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/repositories"
 	"bubblewhite-backend/utils"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type OtpService struct {
@@ -47,13 +50,38 @@ type RequestResult struct {
 	TelegramLinkURL string // only set when Channel == "telegram_pending"
 }
 
-// RequestOTP is the main entry point when a customer submits a phone
-// number to verify. Tries the free Telegram channel first via a known,
-// previously-linked chat — only asks for the Telegram tap-through (or
-// falls back to paid SMS, via RequestSMSFallback) when there's no link
-// yet, since the whole point of TelegramPhoneLink is to make a returning
-// customer's flow genuinely one-step.
+// pendingRegistration bundles the rest of the registration form, already
+// collected before OTP is ever sent — see RequestRegistrationOTP. nil for
+// a plain login-via-OTP request (phone only, no account being created).
+type pendingRegistration struct {
+	Name         string
+	Email        string
+	PasswordHash string
+}
+
+// RequestOTP is the entry point for logging in via OTP — phone only, no
+// account gets created off the back of this. Tries the free Telegram
+// channel first via a known, previously-linked chat — only asks for the
+// Telegram tap-through (or falls back to paid SMS, via
+// RequestSMSFallback) when there's no link yet, since the whole point of
+// TelegramPhoneLink is to make a returning customer's flow genuinely
+// one-step.
 func (s *OtpService) RequestOTP(phone, telegramBotUsername string) (*RequestResult, error) {
+	return s.requestOTP(phone, telegramBotUsername, nil)
+}
+
+// RequestRegistrationOTP is the entry point when a customer submits the
+// FULL registration form (name, phone, email, password) — collected up
+// front, phone verification is the final step. passwordHash is already
+// hashed by the caller (CustomerController), never the raw password, so
+// it never needs to touch this service's own log lines or error paths in
+// plaintext. See VerifyOTP for where this pending data actually turns
+// into a real Customer account once the code is confirmed.
+func (s *OtpService) RequestRegistrationOTP(name, phone, email, passwordHash, telegramBotUsername string) (*RequestResult, error) {
+	return s.requestOTP(phone, telegramBotUsername, &pendingRegistration{Name: name, Email: email, PasswordHash: passwordHash})
+}
+
+func (s *OtpService) requestOTP(phone, telegramBotUsername string, pending *pendingRegistration) (*RequestResult, error) {
 	if link, err := s.TelegramLinks.FindByPhone(phone); err == nil {
 		code, err := generateOTP()
 		if err != nil {
@@ -62,7 +90,7 @@ func (s *OtpService) RequestOTP(phone, telegramBotUsername string) (*RequestResu
 		if err := s.sendTelegramOTP(link.ChatID, code); err != nil {
 			return nil, err
 		}
-		if err := s.saveOtpRequest(phone, code, "telegram_sent", nil); err != nil {
+		if err := s.saveOtpRequest(phone, code, "telegram_sent", nil, pending); err != nil {
 			return nil, err
 		}
 		return &RequestResult{Channel: "telegram_sent"}, nil
@@ -72,7 +100,10 @@ func (s *OtpService) RequestOTP(phone, telegramBotUsername string) (*RequestResu
 	// instead of a code. The code itself isn't generated yet: nobody can
 	// read it until the customer actually opens Telegram, so generating
 	// and "sending" one now would just be a code quietly expiring unused
-	// while the customer is still looking at the button.
+	// while the customer is still looking at the button. The pending
+	// registration fields ARE saved now though, on this same row —
+	// TelegramBotController.Webhook updates this exact record in place
+	// once the tap-through completes, so they carry through naturally.
 	token, err := generateLinkToken()
 	if err != nil {
 		return nil, err
@@ -83,6 +114,7 @@ func (s *OtpService) RequestOTP(phone, telegramBotUsername string) (*RequestResu
 		LinkToken: &token,
 		ExpiresAt: time.Now().Add(otpValidFor),
 	}
+	applyPending(otp, pending)
 	if err := s.Otp.Create(otp); err != nil {
 		return nil, err
 	}
@@ -95,9 +127,17 @@ func (s *OtpService) RequestOTP(phone, telegramBotUsername string) (*RequestResu
 
 // RequestSMSFallback is called when the customer explicitly chooses SMS
 // instead of tapping through Telegram (no Telegram installed, or just a
-// preference) — a separate, deliberate action from RequestOTP rather than
-// an automatic fallback, since SMS costs real money per message and
-// shouldn't fire without the customer actually asking for it.
+// preference) — a separate, deliberate action rather than an automatic
+// fallback, since SMS costs real money per message and shouldn't fire
+// without the customer actually asking for it.
+//
+// Updates any existing pending request for this phone in place (rather
+// than creating a fresh one) so pending registration fields already
+// collected — the customer initially tried Telegram and is now falling
+// back to SMS mid-registration — aren't lost. Falls back to creating a
+// plain, pending-data-less request only if there's genuinely nothing to
+// carry forward (a login-via-OTP attempt that never went through
+// Telegram at all).
 func (s *OtpService) RequestSMSFallback(phone string) error {
 	code, err := generateOTP()
 	if err != nil {
@@ -106,13 +146,34 @@ func (s *OtpService) RequestSMSFallback(phone string) error {
 	if err := s.SMS.SendOTP(phone, code); err != nil {
 		return err
 	}
-	return s.saveOtpRequest(phone, code, "sms", nil)
+	hash, err := utils.HashPassword(code)
+	if err != nil {
+		return err
+	}
+
+	if existing, err := s.Otp.FindLatestUnverifiedByPhone(phone); err == nil {
+		existing.CodeHash = hash
+		existing.Channel = "sms"
+		existing.ExpiresAt = time.Now().Add(otpValidFor)
+		return s.Otp.Update(existing)
+	}
+
+	otp := &models.OtpRequest{
+		Phone:     phone,
+		CodeHash:  hash,
+		Channel:   "sms",
+		ExpiresAt: time.Now().Add(otpValidFor),
+	}
+	return s.Otp.Create(otp)
 }
 
 // CompleteTelegramLink is called by the Telegram bot webhook when a
 // customer taps through and their /start <token> message arrives. Only
 // now does the actual code get generated — this is the point where it
-// first becomes possible for anyone to read it.
+// first becomes possible for anyone to read it. Updates the SAME
+// OtpRequest row created back in requestOTP's telegram_pending branch, so
+// any pending registration fields already on it are untouched and simply
+// carry forward.
 func (s *OtpService) CompleteTelegramLink(token, chatID string) error {
 	pending, err := s.Otp.FindByLinkToken(token)
 	if err != nil {
@@ -150,66 +211,70 @@ func (s *OtpService) CompleteTelegramLink(token, chatID string) error {
 }
 
 // VerifyOTP checks a customer-submitted code against their most recent,
-// still-valid request for that phone. Locks out after otpMaxAttempts
-// wrong tries — a 6-digit code has only a million possibilities, so
-// without a hard attempt cap this would eventually be brute-forceable
-// within its own 5-minute window.
+// still-valid request for that phone, and returns the full OtpRequest on
+// success — the caller (CustomerController) reads its Pending* fields to
+// decide what happens next: if they're set, this verification is what
+// creates the actual Customer account (see CustomerService's own
+// creation path off the back of this); if not, this was a plain
+// login-via-OTP attempt for a phone that either does or doesn't already
+// have an account.
 //
-// On success, returns a VerificationToken the caller must present to
-// actually complete a login or registration — see ConsumeVerificationToken
-// and the model's own doc comment for why proving the code was correct
-// isn't, by itself, enough to let a later, unrelated request claim this
-// phone was verified by them.
-func (s *OtpService) VerifyOTP(phone, code string) (string, error) {
-	otp, err := s.Otp.FindLatestUnverifiedByPhone(phone)
-	if err != nil {
-		return "", ErrOtpExpiredOrNotFound
-	}
-	if otp.CodeHash == "" {
-		// Still telegram_pending — the customer hasn't tapped through
-		// yet, so there's genuinely no code to check against.
-		return "", ErrOtpExpiredOrNotFound
-	}
-	if otp.Attempts >= otpMaxAttempts {
-		return "", ErrOtpTooManyAttempts
-	}
+// Locks out after otpMaxAttempts wrong tries — a 6-digit code has only a
+// million possibilities, so without a hard attempt cap this would
+// eventually be brute-forceable within its own 5-minute window. This
+// entire check runs inside a transaction with a row-level lock
+// (SELECT ... FOR UPDATE) rather than a plain read-then-write, because a
+// plain read-then-write is a real, exploitable race: if an attacker fires
+// many concurrent verify requests for the same phone, every one of them
+// can read the SAME stale Attempts value before any of them writes back,
+// so the counter never actually accumulates past ~1 no matter how many
+// guesses run in parallel — silently defeating the entire attempt cap.
+// The row lock forces concurrent attempts against the same phone to
+// queue up and see each other's writes, so the count is always accurate
+// regardless of how many requests arrive at once.
+func (s *OtpService) VerifyOTP(phone, code string) (*models.OtpRequest, error) {
+	var result *models.OtpRequest
 
-	if !utils.CheckPassword(otp.CodeHash, code) {
-		otp.Attempts++
-		_ = s.Otp.Update(otp)
-		return "", ErrOtpIncorrect
-	}
+	err := s.Otp.DB.Transaction(func(tx *gorm.DB) error {
+		var otp models.OtpRequest
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("phone = ? AND verified = ? AND expires_at > NOW()", phone, false).
+			Order("created_at DESC").
+			First(&otp).Error
+		if err != nil {
+			return ErrOtpExpiredOrNotFound
+		}
+		if otp.CodeHash == "" {
+			// Still telegram_pending — the customer hasn't tapped
+			// through yet, so there's genuinely no code to check against.
+			return ErrOtpExpiredOrNotFound
+		}
+		if otp.Attempts >= otpMaxAttempts {
+			return ErrOtpTooManyAttempts
+		}
 
-	token, err := generateLinkToken() // same shape/entropy requirement, reused rather than a near-duplicate generator
+		if !utils.CheckPassword(otp.CodeHash, code) {
+			otp.Attempts++
+			if err := tx.Save(&otp).Error; err != nil {
+				return err
+			}
+			return ErrOtpIncorrect
+		}
+
+		otp.Verified = true
+		if err := tx.Save(&otp).Error; err != nil {
+			return err
+		}
+		result = &otp
+		return nil
+	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	otp.Verified = true
-	otp.VerificationToken = &token
-	if err := s.Otp.Update(otp); err != nil {
-		return "", err
-	}
-	return token, nil
+	return result, nil
 }
 
-// ConsumeVerificationToken checks that a verification token is real,
-// belongs to the exact phone number the caller is claiming, and hasn't
-// already been used — then invalidates it so it can't be replayed for a
-// second login/registration. Called from CustomerController right before
-// actually logging in or creating an account off the back of an OTP flow.
-func (s *OtpService) ConsumeVerificationToken(token, phone string) error {
-	otp, err := s.Otp.FindByVerificationToken(token)
-	if err != nil {
-		return ErrOtpExpiredOrNotFound
-	}
-	if otp.Phone != phone {
-		return ErrOtpExpiredOrNotFound
-	}
-	otp.VerificationToken = nil // single-use — cleared immediately so a retry/replay of this exact token fails
-	return s.Otp.Update(otp)
-}
-
-func (s *OtpService) saveOtpRequest(phone, code, channel string, linkToken *string) error {
+func (s *OtpService) saveOtpRequest(phone, code, channel string, linkToken *string, pending *pendingRegistration) error {
 	hash, err := utils.HashPassword(code)
 	if err != nil {
 		return err
@@ -221,7 +286,19 @@ func (s *OtpService) saveOtpRequest(phone, code, channel string, linkToken *stri
 		LinkToken: linkToken,
 		ExpiresAt: time.Now().Add(otpValidFor),
 	}
+	applyPending(otp, pending)
 	return s.Otp.Create(otp)
+}
+
+func applyPending(otp *models.OtpRequest, pending *pendingRegistration) {
+	if pending == nil {
+		return
+	}
+	otp.PendingName = &pending.Name
+	otp.PendingPasswordHash = &pending.PasswordHash
+	if pending.Email != "" {
+		otp.PendingEmail = &pending.Email
+	}
 }
 
 // sendTelegramOTP messages a specific customer chat directly — distinct

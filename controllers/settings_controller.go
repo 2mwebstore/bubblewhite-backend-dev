@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/services"
 	"bubblewhite-backend/utils"
@@ -10,10 +11,11 @@ import (
 
 type SettingsController struct {
 	Service *services.SettingsService
+	Audit   *services.AuditLogService
 }
 
-func NewSettingsController(s *services.SettingsService) *SettingsController {
-	return &SettingsController{Service: s}
+func NewSettingsController(s *services.SettingsService, audit *services.AuditLogService) *SettingsController {
+	return &SettingsController{Service: s, Audit: audit}
 }
 
 // GET /api/settings — public, the storefront reads company/contact info from here.
@@ -40,5 +42,11 @@ func (ctrl *SettingsController) Update(c *gin.Context) {
 		utils.InternalError(c, "failed to update settings")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update", Resource: "settings", Description: "Updated site settings",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, updated)
 }

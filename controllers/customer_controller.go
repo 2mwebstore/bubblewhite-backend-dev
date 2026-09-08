@@ -17,10 +17,11 @@ type CustomerController struct {
 	Google   *services.GoogleOAuthService
 	Facebook *services.FacebookOAuthService
 	Otp      *services.OtpService
+	Audit    *services.AuditLogService
 }
 
-func NewCustomerController(s *services.CustomerService, google *services.GoogleOAuthService, facebook *services.FacebookOAuthService, otp *services.OtpService) *CustomerController {
-	return &CustomerController{Service: s, Google: google, Facebook: facebook, Otp: otp}
+func NewCustomerController(s *services.CustomerService, google *services.GoogleOAuthService, facebook *services.FacebookOAuthService, otp *services.OtpService, audit *services.AuditLogService) *CustomerController {
+	return &CustomerController{Service: s, Google: google, Facebook: facebook, Otp: otp, Audit: audit}
 }
 
 // customerJSON builds a consistent response shape across register/login/me/
@@ -73,23 +74,24 @@ func customerTokenIdentifier(customer *models.Customer) string {
 	return "customer"
 }
 
-type registerInput struct {
+type registerRequestInput struct {
 	Name     string `json:"name" validate:"required"`
 	Phone    string `json:"phone" validate:"required"`
 	Email    string `json:"email" validate:"omitempty,email"`
 	Password string `json:"password" validate:"required,min=6"`
-	// VerificationToken proves this exact phone was just confirmed via
-	// OTP — required on every registration now, not optional, per this
-	// project's own decision to require phone verification for every
-	// new account regardless of how they otherwise sign up (Google/
-	// Facebook accounts don't go through this handler at all, since
-	// those providers already verify identity their own way).
-	VerificationToken string `json:"verificationToken" validate:"required"`
 }
 
-// POST /api/customer/register — public
-func (ctrl *CustomerController) Register(c *gin.Context) {
-	var in registerInput
+// POST /api/customer/register/request-otp — public. Replaces the old
+// direct /customer/register endpoint: the full form is collected and
+// validated HERE, up front — phone verification is the final step, not
+// the first one. Nothing is actually created yet; this only checks the
+// input is valid, checks phone/email aren't already taken, hashes the
+// password, and sends the OTP. The account itself is only ever created
+// inside VerifyOTP below, once the code is confirmed — see
+// CustomerService.CreateFromVerifiedOtp and OtpRequest's own Pending*
+// fields for how that data survives the wait between here and there.
+func (ctrl *CustomerController) RegisterRequestOTP(c *gin.Context) {
+	var in registerRequestInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -105,13 +107,14 @@ func (ctrl *CustomerController) Register(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.Otp.ConsumeVerificationToken(in.VerificationToken, phone); err != nil {
-		utils.FailWithErrors(c, map[string]string{"phone": "សូមផ្ទៀងផ្ទាត់លេខទូរស័ព្ទរបស់អ្នកសិន"})
-		return
-	}
-
-	customer, err := ctrl.Service.Register(in.Name, phone, in.Email, in.Password)
-	if err != nil {
+	// Checked now, before ever sending a code, so a phone/email that's
+	// already taken fails immediately with a clear message rather than
+	// wasting an OTP send (a real cost for the SMS fallback) on a
+	// registration that was always going to fail. Re-checked again at
+	// actual account-creation time too — see CreateFromVerifiedOtp's own
+	// comment for why a check this far ahead of verification isn't
+	// enough on its own.
+	if err := ctrl.Service.CheckPhoneAndEmailAvailable(phone, in.Email); err != nil {
 		if errors.Is(err, services.ErrPhoneAlreadyRegistered) {
 			utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទនេះបានចុះឈ្មោះរួចហើយ"})
 			return
@@ -120,17 +123,22 @@ func (ctrl *CustomerController) Register(c *gin.Context) {
 			utils.FailWithErrors(c, map[string]string{"email": "អ៊ីមែលនេះបានចុះឈ្មោះរួចហើយ"})
 			return
 		}
-		utils.InternalError(c, "failed to register")
+		utils.InternalError(c, "failed to check registration details")
 		return
 	}
 
-	token, err := utils.SignCustomerToken(customer.ID, customerTokenIdentifier(customer))
+	passwordHash, err := utils.HashPassword(in.Password)
 	if err != nil {
-		utils.InternalError(c, "failed to sign in after registration")
+		utils.InternalError(c, "failed to process password")
 		return
 	}
 
-	utils.Created(c, gin.H{"token": token, "customer": customerJSON(customer)})
+	result, err := ctrl.Otp.RequestRegistrationOTP(in.Name, phone, in.Email, passwordHash, config.Get().TelegramBotUsername)
+	if err != nil {
+		utils.InternalError(c, "failed to send verification code")
+		return
+	}
+	utils.OK(c, gin.H{"channel": result.Channel, "telegramLinkUrl": result.TelegramLinkURL})
 }
 
 type customerLoginInput struct {
@@ -153,6 +161,12 @@ func (ctrl *CustomerController) Login(c *gin.Context) {
 
 	customer, err := ctrl.Service.Login(in.Identifier, in.Password)
 	if err != nil {
+		ip, ua := auditContext(c)
+		ctrl.Audit.Log(services.LogEntry{
+			ActorType: "customer", Action: "login_failed", Resource: "auth",
+			Description: "Failed login attempt for " + in.Identifier,
+			IPAddress:   ip, UserAgent: ua,
+		})
 		if errors.Is(err, services.ErrCustomerInactive) {
 			utils.Forbidden(c, "គណនីនេះត្រូវបានផ្អាក សូមទាក់ទងមកយើង")
 			return
@@ -171,6 +185,12 @@ func (ctrl *CustomerController) Login(c *gin.Context) {
 		return
 	}
 
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "customer", ActorID: customer.ID, ActorName: customer.Name,
+		Action: "login", Resource: "auth", Description: "Logged in with password",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"token": token, "customer": customerJSON(customer)})
 }
 
@@ -221,6 +241,12 @@ func (ctrl *CustomerController) GoogleLogin(c *gin.Context) {
 		utils.InternalError(c, "failed to sign in")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "customer", ActorID: customer.ID, ActorName: customer.Name,
+		Action: "login", Resource: "auth", Description: "Logged in with Google",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"token": token, "customer": customerJSON(customer)})
 }
 
@@ -270,6 +296,12 @@ func (ctrl *CustomerController) FacebookLogin(c *gin.Context) {
 		utils.InternalError(c, "failed to sign in")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "customer", ActorID: customer.ID, ActorName: customer.Name,
+		Action: "login", Resource: "auth", Description: "Logged in with Facebook",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"token": token, "customer": customerJSON(customer)})
 }
 
@@ -343,16 +375,16 @@ type otpVerifyInput struct {
 }
 
 // POST /api/customer/otp/verify — public. Checks the submitted code, then
-// branches on whether an account already exists for this (now-proven)
-// phone number:
-//   - existing account: logs them in directly, same {token, customer}
-//     shape as every other login endpoint.
-//   - no account yet: returns a verificationToken instead — the frontend
-//     then shows a "complete your profile" (name + password) screen and
-//     submits to /customer/register with this token, which
-//     Register validates before creating the account (see that
-//     handler and OtpService.ConsumeVerificationToken for why a bare
-//     "this phone was verified" claim isn't enough on its own).
+// branches on whether this OtpRequest carries pending registration data
+// (see OtpRequest's own Pending* fields):
+//   - pending registration data present: this verification IS the final
+//     step of registration — creates the account right now (see
+//     CustomerService.CreateFromVerifiedOtp) and logs them in.
+//   - no pending data: a plain login-via-OTP attempt. Existing account —
+//     logs them in directly, same {token, customer} shape as every other
+//     login endpoint. No account — tells the frontend to send the
+//     customer to the registration form instead (there's no partial data
+//     to complete here, unlike the registration-in-progress case above).
 func (ctrl *CustomerController) VerifyOTP(c *gin.Context) {
 	var in otpVerifyInput
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -370,7 +402,7 @@ func (ctrl *CustomerController) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	verificationToken, err := ctrl.Otp.VerifyOTP(phone, in.Code)
+	otp, err := ctrl.Otp.VerifyOTP(phone, in.Code)
 	if err != nil {
 		if errors.Is(err, services.ErrOtpTooManyAttempts) {
 			utils.Forbidden(c, "ព្យាយាមខុសច្រើនដងពេក សូមស្នើសុំលេខកូដថ្មី")
@@ -384,24 +416,70 @@ func (ctrl *CustomerController) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	customer, err := ctrl.Service.LoginWithVerifiedPhone(phone)
-	if err != nil {
-		if errors.Is(err, services.ErrNoAccountForPhone) {
-			utils.OK(c, gin.H{"needsRegistration": true, "verificationToken": verificationToken})
+	var customer *models.Customer
+	var wasRegistration bool
+	if otp.PendingName != nil && otp.PendingPasswordHash != nil {
+		wasRegistration = true
+		// This verification completes a registration — the account is
+		// created RIGHT NOW, from the data collected back when the form
+		// was first submitted (see RegisterRequestOTP), not from a
+		// second request the customer has to make themselves.
+		email := ""
+		if otp.PendingEmail != nil {
+			email = *otp.PendingEmail
+		}
+		customer, err = ctrl.Service.CreateFromVerifiedOtp(*otp.PendingName, phone, email, *otp.PendingPasswordHash)
+		if err != nil {
+			if errors.Is(err, services.ErrPhoneAlreadyRegistered) {
+				utils.FailWithErrors(c, map[string]string{"phone": "លេខទូរស័ព្ទនេះបានចុះឈ្មោះរួចហើយ"})
+				return
+			}
+			if errors.Is(err, services.ErrEmailAlreadyRegistered) {
+				utils.FailWithErrors(c, map[string]string{"email": "អ៊ីមែលនេះបានចុះឈ្មោះរួចហើយ"})
+				return
+			}
+			utils.InternalError(c, "failed to register")
 			return
 		}
-		if errors.Is(err, services.ErrCustomerInactive) {
-			utils.Forbidden(c, "គណនីនេះត្រូវបានផ្អាក សូមទាក់ទងមកយើង")
+	} else {
+		// A plain login-via-OTP attempt — no pending registration data
+		// on this request, so this phone either already has an account
+		// or the customer needs to go fill out the registration form
+		// instead (there's no partial data to fall back on here).
+		customer, err = ctrl.Service.LoginWithVerifiedPhone(phone)
+		if err != nil {
+			if errors.Is(err, services.ErrNoAccountForPhone) {
+				utils.OK(c, gin.H{"needsRegistration": true})
+				return
+			}
+			if errors.Is(err, services.ErrCustomerInactive) {
+				utils.Forbidden(c, "គណនីនេះត្រូវបានផ្អាក សូមទាក់ទងមកយើង")
+				return
+			}
+			utils.InternalError(c, "failed to sign in")
 			return
 		}
-		utils.InternalError(c, "failed to sign in")
-		return
 	}
 
 	token, err := utils.SignCustomerToken(customer.ID, customerTokenIdentifier(customer))
 	if err != nil {
 		utils.InternalError(c, "failed to sign in")
 		return
+	}
+
+	ip, ua := auditContext(c)
+	if wasRegistration {
+		ctrl.Audit.Log(services.LogEntry{
+			ActorType: "customer", ActorID: customer.ID, ActorName: customer.Name,
+			Action: "register", Resource: "auth", Description: "Registered via phone OTP",
+			IPAddress: ip, UserAgent: ua,
+		})
+	} else {
+		ctrl.Audit.Log(services.LogEntry{
+			ActorType: "customer", ActorID: customer.ID, ActorName: customer.Name,
+			Action: "login", Resource: "auth", Description: "Logged in via phone OTP",
+			IPAddress: ip, UserAgent: ua,
+		})
 	}
 	utils.OK(c, gin.H{"token": token, "customer": customerJSON(customer)})
 }
@@ -479,6 +557,12 @@ func (ctrl *CustomerController) UpdateProfile(c *gin.Context) {
 		return
 	}
 
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "customer", ActorID: customer.ID, ActorName: customer.Name,
+		Action: "update", Resource: "customer_profile", Description: "Updated their profile",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, customerJSON(customer))
 }
 
@@ -505,9 +589,21 @@ func (ctrl *CustomerController) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.Service.ChangePassword(middlewares.CurrentCustomerID(c), in.CurrentPassword, in.NewPassword); err != nil {
+	customerID := middlewares.CurrentCustomerID(c)
+	if err := ctrl.Service.ChangePassword(customerID, in.CurrentPassword, in.NewPassword); err != nil {
 		utils.BadRequest(c, err.Error())
 		return
 	}
+
+	ip, ua := auditContext(c)
+	actorName := ""
+	if customer, err := ctrl.Service.GetByID(customerID); err == nil {
+		actorName = customer.Name
+	}
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "customer", ActorID: customerID, ActorName: actorName,
+		Action: "change_password", Resource: "customer_profile", Description: "Changed their password",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"message": "password updated"})
 }

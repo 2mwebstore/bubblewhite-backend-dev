@@ -15,10 +15,11 @@ import (
 
 type OrderController struct {
 	Service *services.OrderService
+	Audit   *services.AuditLogService
 }
 
-func NewOrderController(s *services.OrderService) *OrderController {
-	return &OrderController{Service: s}
+func NewOrderController(s *services.OrderService, audit *services.AuditLogService) *OrderController {
+	return &OrderController{Service: s, Audit: audit}
 }
 
 type checkoutInput struct {
@@ -74,6 +75,15 @@ func (ctrl *OrderController) Checkout(c *gin.Context) {
 		utils.InternalError(c, "failed to place order")
 		return
 	}
+
+	ip, ua := auditContext(c)
+	orderIDStr := strconv.FormatUint(uint64(order.ID), 10)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "customer", ActorID: order.CustomerID,
+		Action: "create", Resource: "order", ResourceID: orderIDStr, ResourceLabel: order.Reference(),
+		Description: "Placed an order",
+		IPAddress:   ip, UserAgent: ua,
+	})
 	utils.Created(c, order)
 }
 

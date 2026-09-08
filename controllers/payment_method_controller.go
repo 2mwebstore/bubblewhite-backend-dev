@@ -3,6 +3,7 @@ package controllers
 import (
 	"strconv"
 
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/services"
 	"bubblewhite-backend/utils"
 
@@ -11,10 +12,11 @@ import (
 
 type PaymentMethodController struct {
 	Service *services.PaymentMethodService
+	Audit   *services.AuditLogService
 }
 
-func NewPaymentMethodController(s *services.PaymentMethodService) *PaymentMethodController {
-	return &PaymentMethodController{Service: s}
+func NewPaymentMethodController(s *services.PaymentMethodService, audit *services.AuditLogService) *PaymentMethodController {
+	return &PaymentMethodController{Service: s, Audit: audit}
 }
 
 // GET /api/payment-methods — public. The storefront's checkout selector
@@ -90,5 +92,11 @@ func (ctrl *PaymentMethodController) Update(c *gin.Context) {
 		utils.NotFound(c, "payment method not found")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update", Resource: "payment_method", ResourceID: c.Param("id"), ResourceLabel: in.Name,
+		Description: "Updated payment method", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, pm)
 }

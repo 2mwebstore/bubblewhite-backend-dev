@@ -3,6 +3,7 @@ package controllers
 import (
 	"strconv"
 
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/services"
 	"bubblewhite-backend/utils"
 
@@ -15,10 +16,11 @@ import (
 // customer token can never reach them.
 type AdminCustomerController struct {
 	Service *services.CustomerService
+	Audit   *services.AuditLogService
 }
 
-func NewAdminCustomerController(s *services.CustomerService) *AdminCustomerController {
-	return &AdminCustomerController{Service: s}
+func NewAdminCustomerController(s *services.CustomerService, audit *services.AuditLogService) *AdminCustomerController {
+	return &AdminCustomerController{Service: s, Audit: audit}
 }
 
 // GET /api/admin/customers (requires customer.view)
@@ -81,6 +83,16 @@ func (ctrl *AdminCustomerController) ResetPassword(c *gin.Context) {
 		utils.InternalError(c, "failed to reset password")
 		return
 	}
+	ip, ua := auditContext(c)
+	label := c.Param("id")
+	if customer, err := ctrl.Service.GetByID(uint(id)); err == nil {
+		label = customer.Name
+	}
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "reset_password", Resource: "customer", ResourceID: c.Param("id"), ResourceLabel: label,
+		Description: "Reset a customer's password", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"message": "password reset"})
 }
 
@@ -112,5 +124,19 @@ func (ctrl *AdminCustomerController) SetActive(c *gin.Context) {
 		utils.InternalError(c, "failed to update customer")
 		return
 	}
+	ip, ua := auditContext(c)
+	label := c.Param("id")
+	if customer, err := ctrl.Service.GetByID(uint(id)); err == nil {
+		label = customer.Name
+	}
+	action := "deactivate"
+	if *in.IsActive {
+		action = "activate"
+	}
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: action, Resource: "customer", ResourceID: c.Param("id"), ResourceLabel: label,
+		Description: "Changed customer account status", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"message": "updated"})
 }

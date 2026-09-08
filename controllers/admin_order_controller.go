@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/repositories"
 	"bubblewhite-backend/services"
@@ -15,10 +16,11 @@ import (
 
 type AdminOrderController struct {
 	Service *services.OrderService
+	Audit   *services.AuditLogService
 }
 
-func NewAdminOrderController(s *services.OrderService) *AdminOrderController {
-	return &AdminOrderController{Service: s}
+func NewAdminOrderController(s *services.OrderService, audit *services.AuditLogService) *AdminOrderController {
+	return &AdminOrderController{Service: s, Audit: audit}
 }
 
 // GET /api/admin/orders (requires order.view)
@@ -102,6 +104,12 @@ func (ctrl *AdminOrderController) UpdateStatus(c *gin.Context) {
 		utils.InternalError(c, "failed to update order status")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update_status", Resource: "order", ResourceID: strconv.FormatUint(id, 10), ResourceLabel: order.Reference(),
+		Description: "Changed order status to " + in.Status, IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, order)
 }
 

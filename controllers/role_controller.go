@@ -17,10 +17,11 @@ import (
 type RoleController struct {
 	Service *services.RoleService
 	DB      *gorm.DB
+	Audit   *services.AuditLogService
 }
 
-func NewRoleController(s *services.RoleService, db *gorm.DB) *RoleController {
-	return &RoleController{Service: s, DB: db}
+func NewRoleController(s *services.RoleService, db *gorm.DB, audit *services.AuditLogService) *RoleController {
+	return &RoleController{Service: s, DB: db, Audit: audit}
 }
 
 // GET /api/admin/roles (requires role.view)
@@ -114,6 +115,12 @@ func (ctrl *RoleController) Create(c *gin.Context) {
 		utils.InternalError(c, "failed to create role")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "create", Resource: "role", ResourceID: strconv.FormatUint(uint64(role.ID), 10), ResourceLabel: role.Name,
+		Description: "Created role", IPAddress: ip, UserAgent: ua,
+	})
 	utils.Created(c, role)
 }
 
@@ -157,6 +164,12 @@ func (ctrl *RoleController) Update(c *gin.Context) {
 		utils.InternalError(c, "failed to update role")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update", Resource: "role", ResourceID: strconv.FormatUint(uint64(role.ID), 10), ResourceLabel: role.Name,
+		Description: "Updated role permissions", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, role)
 }
 
@@ -167,9 +180,19 @@ func (ctrl *RoleController) Delete(c *gin.Context) {
 		utils.BadRequest(c, "invalid role id")
 		return
 	}
+	label := c.Param("id")
+	if role, err := ctrl.Service.GetByID(uint(id)); err == nil {
+		label = role.Name
+	}
 	if err := ctrl.Service.Delete(uint(id)); err != nil {
 		utils.BadRequest(c, err.Error())
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "delete", Resource: "role", ResourceID: c.Param("id"), ResourceLabel: label,
+		Description: "Deleted role", IPAddress: ip, UserAgent: ua,
+	})
 	utils.NoContent(c)
 }

@@ -79,6 +79,17 @@ func CurrentUserID(c *gin.Context) uint {
 	return id
 }
 
+// CurrentUserEmail reads the authenticated user's email out of context —
+// used as the ActorName for admin audit log entries (see
+// controllers/audit_log helpers), so recording who did something doesn't
+// need an extra database lookup on every single mutation just to get a
+// display name; the email already carried in the token is enough.
+func CurrentUserEmail(c *gin.Context) string {
+	v, _ := c.Get(ctxEmail)
+	email, _ := v.(string)
+	return email
+}
+
 // CurrentRoleSlug reads the authenticated user's role slug out of context.
 func CurrentRoleSlug(c *gin.Context) string {
 	v, _ := c.Get(ctxRole)

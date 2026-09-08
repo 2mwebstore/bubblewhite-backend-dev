@@ -63,6 +63,7 @@ func AutoMigrate(db *gorm.DB) {
 		&models.PaymentMethod{},
 		&models.OtpRequest{},
 		&models.TelegramPhoneLink{},
+		&models.AuditLog{},
 	)
 	if err != nil {
 		log.Fatalf("config: migration failed: %v", err)

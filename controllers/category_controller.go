@@ -3,6 +3,7 @@ package controllers
 import (
 	"strconv"
 
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/services"
 	"bubblewhite-backend/utils"
@@ -12,10 +13,11 @@ import (
 
 type CategoryController struct {
 	Service *services.CategoryService
+	Audit   *services.AuditLogService
 }
 
-func NewCategoryController(s *services.CategoryService) *CategoryController {
-	return &CategoryController{Service: s}
+func NewCategoryController(s *services.CategoryService, audit *services.AuditLogService) *CategoryController {
+	return &CategoryController{Service: s, Audit: audit}
 }
 
 // GET /api/categories — public, only active categories
@@ -94,6 +96,12 @@ func (ctrl *CategoryController) Create(c *gin.Context) {
 		utils.InternalError(c, "failed to create category")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "create", Resource: "category", ResourceID: strconv.FormatUint(uint64(cat.ID), 10), ResourceLabel: cat.Name,
+		Description: "Created category", IPAddress: ip, UserAgent: ua,
+	})
 	utils.Created(c, cat)
 }
 
@@ -132,6 +140,12 @@ func (ctrl *CategoryController) Update(c *gin.Context) {
 		utils.InternalError(c, "failed to update category")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update", Resource: "category", ResourceID: strconv.FormatUint(uint64(cat.ID), 10), ResourceLabel: cat.Name,
+		Description: "Updated category", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, cat)
 }
 
@@ -142,9 +156,19 @@ func (ctrl *CategoryController) Delete(c *gin.Context) {
 		utils.BadRequest(c, "invalid category id")
 		return
 	}
+	label := c.Param("id")
+	if cat, err := ctrl.Service.GetByID(uint(id)); err == nil {
+		label = cat.Name
+	}
 	if err := ctrl.Service.Delete(uint(id)); err != nil {
 		utils.InternalError(c, "failed to delete category")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "delete", Resource: "category", ResourceID: c.Param("id"), ResourceLabel: label,
+		Description: "Deleted category", IPAddress: ip, UserAgent: ua,
+	})
 	utils.NoContent(c)
 }

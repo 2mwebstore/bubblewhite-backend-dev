@@ -14,10 +14,11 @@ import (
 type UserController struct {
 	Service *services.UserService
 	Roles   *services.RoleService
+	Audit   *services.AuditLogService
 }
 
-func NewUserController(s *services.UserService, roles *services.RoleService) *UserController {
-	return &UserController{Service: s, Roles: roles}
+func NewUserController(s *services.UserService, roles *services.RoleService, audit *services.AuditLogService) *UserController {
+	return &UserController{Service: s, Roles: roles, Audit: audit}
 }
 
 // canAssignRole reports whether the CALLER is allowed to hand out roleID.
@@ -90,6 +91,12 @@ func (ctrl *UserController) Create(c *gin.Context) {
 		utils.InternalError(c, "failed to create user (email may already be in use)")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "create", Resource: "user", ResourceID: strconv.FormatUint(uint64(user.ID), 10), ResourceLabel: user.Email,
+		Description: "Created staff user", IPAddress: ip, UserAgent: ua,
+	})
 	utils.Created(c, user)
 }
 
@@ -127,6 +134,12 @@ func (ctrl *UserController) Update(c *gin.Context) {
 		utils.InternalError(c, "failed to update user")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update", Resource: "user", ResourceID: strconv.FormatUint(uint64(user.ID), 10), ResourceLabel: user.Email,
+		Description: "Updated staff user", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, user)
 }
 
@@ -137,10 +150,20 @@ func (ctrl *UserController) Delete(c *gin.Context) {
 		utils.BadRequest(c, "invalid user id")
 		return
 	}
+	label := c.Param("id")
+	if user, err := ctrl.Service.GetByID(uint(id)); err == nil {
+		label = user.Email
+	}
 	if err := ctrl.Service.Delete(uint(id)); err != nil {
 		utils.BadRequest(c, err.Error())
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "delete", Resource: "user", ResourceID: c.Param("id"), ResourceLabel: label,
+		Description: "Deleted staff user", IPAddress: ip, UserAgent: ua,
+	})
 	utils.NoContent(c)
 }
 
@@ -173,6 +196,19 @@ func (ctrl *UserController) AssignRole(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
+	ip, ua := auditContext(c)
+	label := c.Param("id")
+	if user, err := ctrl.Service.GetByID(uint(id)); err == nil {
+		label = user.Email
+	}
+	if role, err := ctrl.Roles.GetByID(in.RoleID); err == nil {
+		label += " -> " + role.Name
+	}
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "assign_role", Resource: "user", ResourceID: c.Param("id"), ResourceLabel: label,
+		Description: "Assigned a role", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"message": "role assigned"})
 }
 
@@ -205,5 +241,15 @@ func (ctrl *UserController) ResetPassword(c *gin.Context) {
 		utils.InternalError(c, "failed to reset password")
 		return
 	}
+	ip, ua := auditContext(c)
+	label := c.Param("id")
+	if user, err := ctrl.Service.GetByID(uint(id)); err == nil {
+		label = user.Email
+	}
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "reset_password", Resource: "user", ResourceID: c.Param("id"), ResourceLabel: label,
+		Description: "Reset a staff user's password", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"message": "password reset"})
 }

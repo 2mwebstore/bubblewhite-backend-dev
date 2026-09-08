@@ -2,16 +2,17 @@ package models
 
 import "time"
 
-// OtpRequest is one phone-verification attempt — created when a customer
-// asks to verify a phone number (for login OR registration; the
-// verification itself doesn't care which, see CustomerService's own
-// find-or-create logic for what happens once a phone is confirmed
-// verified) and updated as it moves through its lifecycle.
+// OtpRequest is one phone-verification attempt — created either when a
+// customer wants to log in via OTP (phone only) or when they submit the
+// full registration form (name/email/password collected up front, phone
+// verified as the final step — see OtpService.RequestRegistrationOTP).
+// The verification step itself is what actually creates the Customer
+// account when Pending* fields are present; see CustomerController.VerifyOTP.
 //
 // Channel tracks exactly where this attempt currently stands:
 //   - "telegram_pending": no known TelegramPhoneLink for this phone yet.
 //     CodeHash is empty — the code isn't generated until the customer
-//     actually taps through to Telegram (see TelegramController.Start),
+//     actually taps through to Telegram (see TelegramBotController.Webhook),
 //     since generating and "sending" a code nobody can read yet would
 //     just be a code that silently expires unused.
 //   - "telegram_sent": sent via a Telegram chat — either an existing
@@ -22,7 +23,7 @@ import "time"
 //
 // CodeHash, never the raw code — same reasoning as PasswordHash on
 // Customer: even a short-lived code shouldn't sit in the database in
-// plaintext.
+// plaintext. Same reasoning applies to PendingPasswordHash below.
 //
 // Attempts guards against brute-forcing a short numeric code within its
 // own expiry window — OtpService locks the request out after too many
@@ -35,17 +36,18 @@ type OtpRequest struct {
 	LinkToken *string `json:"-" gorm:"type:varchar(64);uniqueIndex"`
 	Attempts  int     `json:"-" gorm:"default:0"`
 	Verified  bool    `json:"-" gorm:"default:false"`
-	// VerificationToken is set only once Verified becomes true — a
-	// separate, unguessable proof that whoever is making the NEXT call
-	// (completing registration, or logging in) is the same party who
-	// just proved ownership of this phone, not merely someone who knows
-	// the phone number itself. Phone numbers aren't secret, so checking
-	// "was this phone recently verified" alone would let anyone piggyback
-	// on someone else's just-completed verification within its window;
-	// requiring this specific token closes that gap.
-	VerificationToken *string   `json:"-" gorm:"type:varchar(64);uniqueIndex"`
-	ExpiresAt         time.Time `json:"-"`
-	CreatedAt         time.Time `json:"createdAt"`
+	// PendingName/PendingEmail/PendingPasswordHash hold the rest of the
+	// registration form, collected up front — nil for a plain
+	// login-via-OTP request (phone only, no account being created), set
+	// for a registration request. Once VerifyOTP confirms the code, these
+	// are what CustomerService actually creates the account FROM,
+	// exactly once, immediately — there's no separate second API call
+	// where a customer manually re-submits this data after verifying.
+	PendingName         *string   `json:"-" gorm:"type:varchar(150)"`
+	PendingEmail        *string   `json:"-" gorm:"type:varchar(150)"`
+	PendingPasswordHash *string   `json:"-" gorm:"type:varchar(255)"`
+	ExpiresAt           time.Time `json:"-"`
+	CreatedAt           time.Time `json:"createdAt"`
 }
 
 // TelegramPhoneLink is a durable, standalone record of "this phone number

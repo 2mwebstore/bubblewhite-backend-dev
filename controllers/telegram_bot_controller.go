@@ -1,9 +1,12 @@
 package controllers
 
 import (
+	"crypto/subtle"
+	"log"
 	"strconv"
 	"strings"
 
+	"bubblewhite-backend/config"
 	"bubblewhite-backend/services"
 
 	"github.com/gin-gonic/gin"
@@ -34,11 +37,37 @@ type telegramUpdate struct {
 
 // Webhook receives every update Telegram sends this bot — configured via
 // Telegram's setWebhook API to point at this endpoint. Deliberately always
-// responds 200 regardless of outcome: Telegram interprets a non-200 as
-// "retry this update later" and will keep resending it, which would just
-// repeat the same (by then likely already-consumed or expired)
-// verification attempt rather than fix anything.
+// responds 200 for a well-formed request from Telegram itself, regardless
+// of outcome: Telegram interprets a non-200 as "retry this update later"
+// and will keep resending it, which would just repeat the same (by then
+// likely already-consumed or expired) verification attempt rather than
+// fix anything.
+//
+// The X-Telegram-Bot-Api-Secret-Token check below is a real, necessary
+// defense, not a formality: without it, this URL has no protection at
+// all beyond obscurity — anyone who discovers it could POST a fabricated
+// update claiming an arbitrary chat_id, hijacking a victim's pending
+// verification by having their OTP code delivered to an
+// attacker-controlled Telegram chat instead, and permanently linking
+// that chat to the victim's phone for every future OTP request (see
+// TelegramPhoneLink). A 401 here is correct, not just tolerated — a
+// request that fails this check never came from Telegram, so Telegram's
+// own retry behavior is simply not a concern for it.
 func (ctrl *TelegramBotController) Webhook(c *gin.Context) {
+	secret := config.Get().TelegramWebhookSecret
+	if secret == "" {
+		// Not yet configured — logged loudly rather than silently
+		// accepted, since this webhook is running with zero protection
+		// against spoofed requests until this is set. Still processes
+		// the request rather than rejecting outright, so an existing
+		// deployment mid-setup doesn't have the whole feature break
+		// silently the moment this code ships.
+		log.Println("telegram webhook: TELEGRAM_WEBHOOK_SECRET is not configured — this endpoint currently accepts unauthenticated requests, set it as soon as possible")
+	} else if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Telegram-Bot-Api-Secret-Token")), []byte(secret)) != 1 {
+		c.JSON(401, gin.H{"ok": false})
+		return
+	}
+
 	var update telegramUpdate
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(200, gin.H{"ok": true})

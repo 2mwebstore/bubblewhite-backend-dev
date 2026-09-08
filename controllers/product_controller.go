@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/repositories"
 	"bubblewhite-backend/services"
@@ -14,10 +15,11 @@ import (
 
 type ProductController struct {
 	Service *services.ProductService
+	Audit   *services.AuditLogService
 }
 
-func NewProductController(s *services.ProductService) *ProductController {
-	return &ProductController{Service: s}
+func NewProductController(s *services.ProductService, audit *services.AuditLogService) *ProductController {
+	return &ProductController{Service: s, Audit: audit}
 }
 
 // GET /api/products
@@ -135,6 +137,13 @@ func (ctrl *ProductController) Create(c *gin.Context) {
 		utils.InternalError(c, "failed to create product")
 		return
 	}
+
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "create", Resource: "product", ResourceID: product.ID, ResourceLabel: product.Name,
+		Description: "Created product", IPAddress: ip, UserAgent: ua,
+	})
 	utils.Created(c, product)
 }
 
@@ -176,14 +185,35 @@ func (ctrl *ProductController) Update(c *gin.Context) {
 		utils.InternalError(c, "failed to update product")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update", Resource: "product", ResourceID: product.ID, ResourceLabel: product.Name,
+		Description: "Updated product", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, product)
 }
 
 // DELETE /api/admin/products/:id (requires product.delete permission)
 func (ctrl *ProductController) Delete(c *gin.Context) {
-	if err := ctrl.Service.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	// Fetched before deletion purely so the audit entry can record its
+	// name — the delete itself doesn't need this, but "deleted product
+	// #42" is far less useful than "deleted product #42, 'Blue T-Shirt'"
+	// once the record is gone and can't be looked up anymore.
+	label := id
+	if product, err := ctrl.Service.GetByID(id); err == nil {
+		label = product.Name
+	}
+	if err := ctrl.Service.Delete(id); err != nil {
 		utils.InternalError(c, "failed to delete product")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "delete", Resource: "product", ResourceID: id, ResourceLabel: label,
+		Description: "Deleted product", IPAddress: ip, UserAgent: ua,
+	})
 	utils.NoContent(c)
 }

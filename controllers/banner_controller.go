@@ -3,6 +3,7 @@ package controllers
 import (
 	"strconv"
 
+	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/services"
 	"bubblewhite-backend/utils"
@@ -12,10 +13,11 @@ import (
 
 type BannerController struct {
 	Service *services.BannerService
+	Audit   *services.AuditLogService
 }
 
-func NewBannerController(s *services.BannerService) *BannerController {
-	return &BannerController{Service: s}
+func NewBannerController(s *services.BannerService, audit *services.AuditLogService) *BannerController {
+	return &BannerController{Service: s, Audit: audit}
 }
 
 // GET /api/banners — public, powers the storefront home page hero carousel.
@@ -74,6 +76,12 @@ func (ctrl *BannerController) Create(c *gin.Context) {
 		utils.InternalError(c, "failed to create banner")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "create", Resource: "banner", ResourceID: strconv.FormatUint(uint64(banner.ID), 10),
+		Description: "Created banner", IPAddress: ip, UserAgent: ua,
+	})
 	utils.Created(c, banner)
 }
 
@@ -109,6 +117,12 @@ func (ctrl *BannerController) Update(c *gin.Context) {
 		utils.InternalError(c, "failed to update banner")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "update", Resource: "banner", ResourceID: strconv.FormatUint(uint64(banner.ID), 10),
+		Description: "Updated banner", IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, banner)
 }
 
@@ -123,5 +137,11 @@ func (ctrl *BannerController) Delete(c *gin.Context) {
 		utils.InternalError(c, "failed to delete banner")
 		return
 	}
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "delete", Resource: "banner", ResourceID: c.Param("id"),
+		Description: "Deleted banner", IPAddress: ip, UserAgent: ua,
+	})
 	utils.NoContent(c)
 }

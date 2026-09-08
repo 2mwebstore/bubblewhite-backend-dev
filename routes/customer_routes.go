@@ -7,8 +7,12 @@ import (
 )
 
 func RegisterCustomerRoutes(api *gin.RouterGroup, c *Container) {
-	// Public — register/login for storefront shoppers.
-	api.POST("/customer/register", c.LoginRateLimiter.Middleware(), c.Customer.Register)
+	// Public — register/login for storefront shoppers. Registration is
+	// now a two-step OTP flow (see RegisterRequestOTP/VerifyOTP) rather
+	// than a single POST — there's no standalone /customer/register
+	// endpoint anymore, since the account is only ever created once
+	// phone verification actually completes.
+	api.POST("/customer/register/request-otp", c.LoginRateLimiter.Middleware(), c.Customer.RegisterRequestOTP)
 	api.POST("/customer/login", c.LoginRateLimiter.Middleware(), c.Customer.Login)
 	api.POST("/customer/auth/google", c.LoginRateLimiter.Middleware(), c.Customer.GoogleLogin)
 	api.POST("/customer/auth/facebook", c.LoginRateLimiter.Middleware(), c.Customer.FacebookLogin)

@@ -45,38 +45,6 @@ var ErrOAuthAccountNoPassword = errors.New("this account signs in with google or
 // generic failure.
 var ErrNoAccountForPhone = errors.New("no account exists for this phone number")
 
-// Register creates a new customer account. Phone is required and must be
-// unique; email is optional (nil when not given, so multiple customers can
-// have no email without colliding on the unique index — see Customer's doc
-// comment). Both existing-value checks happen up front (rather than only
-// relying on the DB's unique constraints) so the caller gets a clean,
-// friendly field error instead of a raw duplicate-key database error —
-// same pattern used for products/categories.
-func (s *CustomerService) Register(name, phone, email, password string) (*models.Customer, error) {
-	if _, err := s.Customers.FindByPhone(phone); err == nil {
-		return nil, ErrPhoneAlreadyRegistered
-	}
-
-	var emailPtr *string
-	if email != "" {
-		if _, err := s.Customers.FindByEmail(email); err == nil {
-			return nil, ErrEmailAlreadyRegistered
-		}
-		emailPtr = &email
-	}
-
-	hash, err := utils.HashPassword(password)
-	if err != nil {
-		return nil, err
-	}
-
-	customer := &models.Customer{Name: name, Phone: &phone, Email: emailPtr, PasswordHash: &hash, IsActive: true}
-	if err := s.Customers.Create(customer); err != nil {
-		return nil, err
-	}
-	return customer, nil
-}
-
 // Login accepts EITHER a phone number or an email as the identifier, since
 // email is optional at registration — some customers only ever have a
 // phone number to log in with. Rejects a disabled account with a distinct
@@ -190,11 +158,11 @@ func (s *CustomerService) LoginOrRegisterWithFacebook(facebookID, email, name st
 }
 
 // LoginWithVerifiedPhone logs in an existing customer purely on the
-// strength of a phone that's already been proven via OTP (see
-// OtpService.ConsumeVerificationToken, which the caller must have
-// already checked before this is ever called) — no password check at
-// all, since a successfully verified OTP already established identity
-// just as strongly as a password would have. Returns ErrNoAccountForPhone
+// strength of a phone that's already been confirmed via OTP (see
+// OtpService.VerifyOTP, which the caller has already checked succeeded
+// before this is ever called) — no password check at all, since a
+// successfully verified OTP already established identity just as
+// strongly as a password would have. Returns ErrNoAccountForPhone
 // (not ErrInvalidCustomerCredentials) if no customer has this phone at
 // all — see that error's own doc comment for why this case is safe to be
 // explicit about here specifically.
@@ -212,6 +180,55 @@ func (s *CustomerService) LoginWithVerifiedPhone(phone string) (*models.Customer
 	}
 	if !customer.IsActive {
 		return nil, ErrCustomerInactive
+	}
+	return customer, nil
+}
+
+// CreateFromVerifiedOtp creates a Customer account once OTP verification
+// has succeeded for a registration request — passwordHash is ALREADY
+// hashed (see CustomerController.RequestRegistrationOTP, which hashes it
+// before it's ever stored on the pending OtpRequest), unlike Register,
+// which takes the raw password and hashes it itself.
+//
+// Uniqueness is re-checked here even though RequestRegistrationOTP
+// already checked it before ever sending a code — minutes can pass
+// between requesting a code and verifying it, and someone else could
+// have registered the same phone or email in that window. This is the
+// same ErrPhoneAlreadyRegistered/ErrEmailAlreadyRegistered pair Register
+// itself returns, not a distinct set of errors for this path.
+// CheckPhoneAndEmailAvailable is the same uniqueness check Register/
+// CreateFromVerifiedOtp do internally, exposed separately so
+// RegisterRequestOTP can fail fast — before ever sending a code — rather
+// than only discovering a phone or email is already taken once the
+// customer has already gone through OTP verification.
+func (s *CustomerService) CheckPhoneAndEmailAvailable(phone, email string) error {
+	if _, err := s.Customers.FindByPhone(phone); err == nil {
+		return ErrPhoneAlreadyRegistered
+	}
+	if email != "" {
+		if _, err := s.Customers.FindByEmail(email); err == nil {
+			return ErrEmailAlreadyRegistered
+		}
+	}
+	return nil
+}
+
+func (s *CustomerService) CreateFromVerifiedOtp(name, phone, email, passwordHash string) (*models.Customer, error) {
+	if _, err := s.Customers.FindByPhone(phone); err == nil {
+		return nil, ErrPhoneAlreadyRegistered
+	}
+
+	var emailPtr *string
+	if email != "" {
+		if _, err := s.Customers.FindByEmail(email); err == nil {
+			return nil, ErrEmailAlreadyRegistered
+		}
+		emailPtr = &email
+	}
+
+	customer := &models.Customer{Name: name, Phone: &phone, Email: emailPtr, PasswordHash: &passwordHash, IsActive: true}
+	if err := s.Customers.Create(customer); err != nil {
+		return nil, err
 	}
 	return customer, nil
 }

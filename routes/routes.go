@@ -32,6 +32,7 @@ type Container struct {
 	AdminCustomer  *controllers.AdminCustomerController
 	PPCBankWebhook *controllers.PPCBankWebhookController
 	TelegramBot    *controllers.TelegramBotController
+	AuditLog       *controllers.AdminAuditLogController
 	PaymentMethod  *controllers.PaymentMethodController
 
 	// Stricter, dedicated rate limiters for endpoints that are actual
@@ -95,6 +96,9 @@ func Build(db *gorm.DB) *Container {
 	googleOAuthService := services.NewGoogleOAuthService(config.Get().GoogleClientID)
 	facebookOAuthService := services.NewFacebookOAuthService(config.Get().FacebookAppID, config.Get().FacebookAppSecret)
 
+	auditLogRepo := repositories.NewAuditLogRepository(db)
+	auditLogService := services.NewAuditLogService(auditLogRepo)
+
 	otpRepo := repositories.NewOtpRepository(db)
 	telegramLinkRepo := repositories.NewTelegramPhoneLinkRepository(db)
 	plasgateSMS := services.NewPlasgateSMSService(config.Get().PlasgatePrivateKey, config.Get().PlasgateSecretKey, config.Get().PlasgateSenderID)
@@ -104,23 +108,24 @@ func Build(db *gorm.DB) *Container {
 	return &Container{
 		DB: db,
 
-		Auth:           controllers.NewAuthController(authService),
-		Product:        controllers.NewProductController(productService),
-		Category:       controllers.NewCategoryController(categoryService),
-		User:           controllers.NewUserController(userService, roleService),
-		Role:           controllers.NewRoleController(roleService, db),
-		Settings:       controllers.NewSettingsController(settingsService),
-		PaymentMethod:  controllers.NewPaymentMethodController(paymentMethodService),
+		Auth:           controllers.NewAuthController(authService, auditLogService),
+		Product:        controllers.NewProductController(productService, auditLogService),
+		Category:       controllers.NewCategoryController(categoryService, auditLogService),
+		User:           controllers.NewUserController(userService, roleService, auditLogService),
+		Role:           controllers.NewRoleController(roleService, db, auditLogService),
+		Settings:       controllers.NewSettingsController(settingsService, auditLogService),
+		PaymentMethod:  controllers.NewPaymentMethodController(paymentMethodService, auditLogService),
 		Contact:        controllers.NewContactController(contactService),
 		Upload:         controllers.NewUploadController(uploadService),
-		Banner:         controllers.NewBannerController(bannerService),
-		Customer:       controllers.NewCustomerController(customerService, googleOAuthService, facebookOAuthService, otpService),
+		Banner:         controllers.NewBannerController(bannerService, auditLogService),
+		Customer:       controllers.NewCustomerController(customerService, googleOAuthService, facebookOAuthService, otpService, auditLogService),
 		Cart:           controllers.NewCartController(cartService),
-		Order:          controllers.NewOrderController(orderService),
-		AdminOrder:     controllers.NewAdminOrderController(orderService),
-		AdminCustomer:  controllers.NewAdminCustomerController(customerService),
+		Order:          controllers.NewOrderController(orderService, auditLogService),
+		AdminOrder:     controllers.NewAdminOrderController(orderService, auditLogService),
+		AdminCustomer:  controllers.NewAdminCustomerController(customerService, auditLogService),
 		PPCBankWebhook: controllers.NewPPCBankWebhookController(orderService),
 		TelegramBot:    controllers.NewTelegramBotController(otpService),
+		AuditLog:       controllers.NewAdminAuditLogController(auditLogService),
 
 		// 6/minute allows a few genuine mistyped-password retries without
 		// friction, while still shutting down a sustained brute-force
@@ -170,6 +175,7 @@ func RegisterRoutes(r *gin.Engine, c *Container) {
 	RegisterCustomerRoutes(api, c)
 	RegisterOrderRoutes(api, c)
 	RegisterAdminCustomerRoutes(api, c)
+	RegisterAuditLogRoutes(api, c)
 	RegisterWebhookRoutes(api, c)
 	RegisterAdminOrderRoutes(api, c)
 }

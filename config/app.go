@@ -80,6 +80,18 @@ type Config struct {
 	// deep link returned to the frontend by CustomerController.RequestOTP)
 	// — distinct from TelegramBotToken, which stays backend-only.
 	TelegramBotUsername string
+	// TelegramWebhookSecret is checked against the
+	// X-Telegram-Bot-Api-Secret-Token header on every incoming webhook
+	// call (see TelegramBotController.Webhook) — without this, ANYONE who
+	// discovers the webhook URL (not secret itself — it's a fixed,
+	// guessable path) could POST a fabricated Telegram update claiming an
+	// arbitrary chat_id, hijacking a victim's pending OTP verification by
+	// having the code delivered to an attacker-controlled Telegram chat
+	// instead, and permanently linking that chat to the victim's phone
+	// for all future OTP requests. Set the same value here and via
+	// Telegram's own setWebhook secret_token parameter — see this
+	// project's own setup notes for the exact call.
+	TelegramWebhookSecret string
 
 	// Plasgate — Cambodia's largest SMS gateway, used as the paid
 	// fallback for OTP delivery when a customer has no Telegram linked
@@ -156,9 +168,10 @@ func LoadConfig() *Config {
 			PPCBankSuccessURL:   getEnv("PPCBANK_SUCCESS_URL", ""),
 			PPCBankErrorURL:     getEnv("PPCBANK_ERROR_URL", ""),
 
-			TelegramBotToken:    getEnv("TELEGRAM_BOT_TOKEN", ""),
-			TelegramChatID:      getEnv("TELEGRAM_CHAT_ID", ""),
-			TelegramBotUsername: getEnv("TELEGRAM_BOT_USERNAME", ""),
+			TelegramBotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
+			TelegramChatID:        getEnv("TELEGRAM_CHAT_ID", ""),
+			TelegramBotUsername:   getEnv("TELEGRAM_BOT_USERNAME", ""),
+			TelegramWebhookSecret: getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
 
 			PlasgatePrivateKey: getEnv("PLASGATE_PRIVATE_KEY", ""),
 			PlasgateSecretKey:  getEnv("PLASGATE_SECRET_KEY", ""),

@@ -163,7 +163,7 @@ func (rl *RateLimiter) check(ip string) checkResult {
 }
 
 // Middleware returns a gin.HandlerFunc enforcing this limiter's rate
-// against realClientIP(c) — never c.ClientIP() directly, see that
+// against RealClientIP(c) — never c.ClientIP() directly, see that
 // function's own comment for why.
 func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -172,7 +172,7 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 			return
 		}
 
-		ip := realClientIP(c)
+		ip := RealClientIP(c)
 		if rl.isAllowlisted(ip) {
 			c.Next()
 			return
@@ -201,7 +201,7 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 	}
 }
 
-// realClientIP extracts the actual client IP behind Railway's edge proxy.
+// RealClientIP extracts the actual client IP behind Railway's edge proxy.
 //
 // This deliberately does NOT use Gin's built-in c.ClientIP(), which
 // requires correctly configuring SetTrustedProxies with Railway's proxy
@@ -224,7 +224,7 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 //
 // Falls back to Gin's own ClientIP() (the raw TCP remote address) when
 // there's no proxy in front at all — e.g. local development.
-func realClientIP(c *gin.Context) string {
+func RealClientIP(c *gin.Context) string {
 	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
 		first := strings.TrimSpace(strings.Split(xff, ",")[0])
 		if first != "" {

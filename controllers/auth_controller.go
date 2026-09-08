@@ -11,10 +11,11 @@ import (
 
 type AuthController struct {
 	Service *services.AuthService
+	Audit   *services.AuditLogService
 }
 
-func NewAuthController(s *services.AuthService) *AuthController {
-	return &AuthController{Service: s}
+func NewAuthController(s *services.AuthService, audit *services.AuditLogService) *AuthController {
+	return &AuthController{Service: s, Audit: audit}
 }
 
 // POST /api/auth/login
@@ -31,10 +32,22 @@ func (ctrl *AuthController) Login(c *gin.Context) {
 
 	res, err := ctrl.Service.Login(req)
 	if err != nil {
+		ip, ua := auditContext(c)
+		ctrl.Audit.Log(services.LogEntry{
+			ActorType: "admin", Action: "login_failed", Resource: "auth",
+			Description: "Failed staff login attempt for " + req.Email,
+			IPAddress:   ip, UserAgent: ua,
+		})
 		utils.Unauthorized(c, err.Error())
 		return
 	}
 
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: res.User.ID, ActorName: res.User.Name,
+		Action: "login", Resource: "auth", Description: "Logged in",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, res)
 }
 
@@ -56,6 +69,12 @@ func (ctrl *AuthController) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	ip, ua := auditContext(c)
+	ctrl.Audit.Log(services.LogEntry{
+		ActorType: "admin", ActorID: userID, ActorName: middlewares.CurrentUserEmail(c),
+		Action: "change_password", Resource: "auth", Description: "Changed their password",
+		IPAddress: ip, UserAgent: ua,
+	})
 	utils.OK(c, gin.H{"message": "password updated"})
 }
 
