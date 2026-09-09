@@ -75,6 +75,12 @@ func main() {
 	container := routes.Build(db)
 	routes.RegisterRoutes(r, container)
 
+	// Daily database backup to Telegram — see BackupService's own doc
+	// comment for why this is a background goroutine rather than a
+	// separate cron job/process, and for the deliberate choice to
+	// generate the dump in pure Go rather than shelling out to mysqldump.
+	container.BackupService.StartScheduler()
+
 	port := cfg.Port
 	if port == "" {
 		port = "8080"

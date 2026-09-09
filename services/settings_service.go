@@ -52,6 +52,7 @@ func (s *SettingsService) Update(patch *models.Settings) (*models.Settings, erro
 	current.Longitude = patch.Longitude
 	current.DeliveryDistanceKm = patch.DeliveryDistanceKm
 	current.ShippingFee = patch.ShippingFee
+	current.BackupTelegramGroupID = patch.BackupTelegramGroupID
 
 	if err := s.Settings.Update(current); err != nil {
 		return nil, err

@@ -54,6 +54,16 @@ type Settings struct {
 	// something needing NULL/pointer handling.
 	ShippingFee float64 `json:"shippingFee" gorm:"not null;default:0"`
 
+	// BackupTelegramGroupID is where the daily automated database backup
+	// (see services/backup_service.go) sends its file — a numeric
+	// Telegram chat/group ID, editable here rather than only via an env
+	// var so an admin can point backups at a different group without a
+	// redeploy. Deliberately separate from the order-notification
+	// TELEGRAM_CHAT_ID env var: the two can be, but don't have to be,
+	// the same group. Blank means backups are skipped, not sent nowhere
+	// silently — see the backup service's own handling of this.
+	BackupTelegramGroupID string `json:"backupTelegramGroupId" gorm:"type:varchar(64)"`
+
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 

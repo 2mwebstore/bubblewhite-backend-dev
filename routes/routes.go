@@ -33,7 +33,13 @@ type Container struct {
 	PPCBankWebhook *controllers.PPCBankWebhookController
 	TelegramBot    *controllers.TelegramBotController
 	AuditLog       *controllers.AdminAuditLogController
-	PaymentMethod  *controllers.PaymentMethodController
+	Backup         *controllers.AdminBackupController
+	// BackupService isn't wired into any route directly — main.go calls
+	// BackupService.StartScheduler() once at boot for the automatic
+	// daily run; the Backup controller above wraps this same service for
+	// the manual "Backup now" admin endpoint.
+	BackupService *services.BackupService
+	PaymentMethod *controllers.PaymentMethodController
 
 	// Stricter, dedicated rate limiters for endpoints that are actual
 	// abuse targets in a way general browsing isn't — repeated login
@@ -98,6 +104,7 @@ func Build(db *gorm.DB) *Container {
 
 	auditLogRepo := repositories.NewAuditLogRepository(db)
 	auditLogService := services.NewAuditLogService(auditLogRepo)
+	backupService := services.NewBackupService(db, settingsRepo)
 
 	otpRepo := repositories.NewOtpRepository(db)
 	telegramLinkRepo := repositories.NewTelegramPhoneLinkRepository(db)
@@ -126,6 +133,8 @@ func Build(db *gorm.DB) *Container {
 		PPCBankWebhook: controllers.NewPPCBankWebhookController(orderService),
 		TelegramBot:    controllers.NewTelegramBotController(otpService),
 		AuditLog:       controllers.NewAdminAuditLogController(auditLogService),
+		Backup:         controllers.NewAdminBackupController(backupService, auditLogService),
+		BackupService:  backupService,
 
 		// 6/minute allows a few genuine mistyped-password retries without
 		// friction, while still shutting down a sustained brute-force

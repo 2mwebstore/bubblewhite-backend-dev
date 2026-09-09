@@ -14,4 +14,9 @@ func RegisterSettingsRoutes(api *gin.RouterGroup, c *Container) {
 	admin.Use(middlewares.AuthMiddleware())
 	admin.Use(c.AdminRateLimiter.Middleware())
 	admin.PUT("", middlewares.RequirePermission(c.DB, "settings.update"), c.Settings.Update)
+	// Same LoginRateLimiter as every other "occasional, deliberate
+	// action" endpoint — a full database dump is expensive enough that
+	// it shouldn't be spammable at the much higher general AdminRateLimiter
+	// rate just because it's an authenticated admin action.
+	admin.POST("/backup/run", c.LoginRateLimiter.Middleware(), middlewares.RequirePermission(c.DB, "settings.update"), c.Backup.RunNow)
 }
