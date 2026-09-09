@@ -30,16 +30,14 @@ type AuditLog struct {
 	Description   string  `json:"description" gorm:"type:text"`
 	IPAddress     string  `json:"ipAddress" gorm:"type:varchar(64)"`
 	UserAgent     string  `json:"userAgent" gorm:"type:varchar(255)"`
-	// Country/IsVPN/IsProxy are filled in AFTER the row is created, by a
-	// background lookup against a third-party IP intelligence API (see
-	// services/ip_intelligence_service.go) — never synchronously as part
-	// of Log() itself, so a slow or unreachable third-party API can
+	// Country is filled in AFTER the row is created, by a background
+	// lookup against a third-party IP geolocation API (see
+	// services/ip_intelligence_service.go) — never synchronously as
+	// part of Log() itself, so a slow or unreachable third-party API can
 	// never add latency to the actual action being audited (a login, a
-	// product update, etc.). This means these three fields may briefly
-	// read as blank/false immediately after an action, before that
-	// background lookup finishes — a deliberate trade-off, not a bug.
+	// product update, etc.). This means it may briefly read as blank
+	// immediately after an action, before that background lookup
+	// finishes — a deliberate trade-off, not a bug.
 	Country   string    `json:"country" gorm:"type:varchar(100)"`
-	IsVPN     bool      `json:"isVpn"`
-	IsProxy   bool      `json:"isProxy"`
 	CreatedAt time.Time `json:"createdAt" gorm:"index"`
 }

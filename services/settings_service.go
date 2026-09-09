@@ -54,7 +54,6 @@ func (s *SettingsService) Update(patch *models.Settings) (*models.Settings, erro
 	current.ShippingFee = patch.ShippingFee
 	current.BackupTelegramGroupID = patch.BackupTelegramGroupID
 	current.BackupTelegramBotToken = patch.BackupTelegramBotToken
-	current.IPIntelligenceAPIKey = patch.IPIntelligenceAPIKey
 
 	if err := s.Settings.Update(current); err != nil {
 		return nil, err

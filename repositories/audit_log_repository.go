@@ -117,16 +117,12 @@ func (r *AuditLogRepository) DeleteByIDs(actorType string, ids []uint) (int64, e
 	return result.RowsAffected, result.Error
 }
 
-// UpdateGeoInfo patches just the country/VPN/proxy fields on one
-// already-created entry — called from a background goroutine once the
-// IP intelligence lookup for that entry's IP completes (see
-// AuditLogService.Log), never as part of creating the row itself.
-func (r *AuditLogRepository) UpdateGeoInfo(id uint, country string, isVPN, isProxy bool) error {
-	return r.DB.Model(&models.AuditLog{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"country":  country,
-		"is_vpn":   isVPN,
-		"is_proxy": isProxy,
-	}).Error
+// UpdateGeoInfo patches just the country field on one already-created
+// entry — called from a background goroutine once the IP geolocation
+// lookup for that entry's IP completes (see AuditLogService.Log), never
+// as part of creating the row itself.
+func (r *AuditLogRepository) UpdateGeoInfo(id uint, country string) error {
+	return r.DB.Model(&models.AuditLog{}).Where("id = ?", id).Update("country", country).Error
 }
 
 // DistinctActions/DistinctResources power the filter dropdowns on the

@@ -9,6 +9,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -59,15 +60,34 @@ var ErrTelegramBotNotConfigured = errors.New("TELEGRAM_BOT_TOKEN is not set on t
 // real, specific message instead of a silent no-op; the scheduled
 // midnight caller (see StartScheduler) still just logs whatever comes
 // back, since there's no one waiting on that call to report to.
-func (s *BackupService) RunBackup() error {
+//
+// Wrapped in its own panic recovery (see the deferred recover below) so
+// that ANY unexpected panic anywhere in this flow — a nil pointer, a
+// slice index, anything not yet exercised — turns into a proper,
+// descriptive error returned to the caller, rather than being caught
+// by Gin's own top-level recovery middleware, which returns a bare 500
+// with no message at all. If this backup is still failing after this
+// change, checking Railway's own server logs for the "backup:" lines
+// logged at each stage below is the most direct way to see exactly
+// where it's failing — that's not something visible from here.
+func (s *BackupService) RunBackup() (err error) {
 	if !atomic.CompareAndSwapInt32(&s.running, 0, 1) {
 		return ErrBackupAlreadyRunning
 	}
 	defer atomic.StoreInt32(&s.running, 0)
 
-	settings, err := s.Settings.Get()
-	if err != nil {
-		return fmt.Errorf("loading settings: %w", err)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("backup: PANIC recovered: %v\n%s", r, debug.Stack())
+			err = fmt.Errorf("internal error during backup (panic): %v", r)
+		}
+	}()
+
+	log.Println("backup: starting")
+
+	settings, loadErr := s.Settings.Get()
+	if loadErr != nil {
+		return fmt.Errorf("loading settings: %w", loadErr)
 	}
 	groupID := settings.BackupTelegramGroupID
 	if groupID == "" {
@@ -89,17 +109,28 @@ func (s *BackupService) RunBackup() error {
 		return ErrTelegramBotNotConfigured
 	}
 
-	dump, err := s.generateDump()
-	if err != nil {
-		return fmt.Errorf("generating dump: %w", err)
+	log.Println("backup: generating SQL dump")
+	dump, genErr := s.generateDump()
+	if genErr != nil {
+		return fmt.Errorf("generating dump: %w", genErr)
+	}
+	log.Printf("backup: dump generated, %d bytes", len(dump))
+
+	// Telegram bots can only send files up to 50MB via sendDocument —
+	// caught explicitly here with a clear message, rather than letting
+	// it fail as an opaque rejection from Telegram's API.
+	const telegramMaxBytes = 50 * 1024 * 1024
+	if len(dump) > telegramMaxBytes {
+		return fmt.Errorf("dump is %d bytes, which exceeds Telegram's 50MB file size limit", len(dump))
 	}
 
 	loc, _ := time.LoadLocation("Asia/Phnom_Penh")
 	filename := fmt.Sprintf("bubblewhite-backup-%s.sql", time.Now().In(loc).Format("2006-01-02_15-04-05"))
 	caption := fmt.Sprintf("BubbleWhite database backup — %s (Phnom Penh time)", time.Now().In(loc).Format("2006-01-02 15:04"))
 
-	if err := sendDocumentToTelegram(botToken, groupID, filename, caption, dump); err != nil {
-		return fmt.Errorf("sending to telegram: %w", err)
+	log.Println("backup: sending to telegram")
+	if sendErr := sendDocumentToTelegram(botToken, groupID, filename, caption, dump); sendErr != nil {
+		return fmt.Errorf("sending to telegram: %w", sendErr)
 	}
 	log.Printf("backup: sent %s (%d bytes) to telegram group %s", filename, len(dump), groupID)
 	return nil

@@ -103,7 +103,7 @@ func Build(db *gorm.DB) *Container {
 	facebookOAuthService := services.NewFacebookOAuthService(config.Get().FacebookAppID, config.Get().FacebookAppSecret)
 
 	auditLogRepo := repositories.NewAuditLogRepository(db)
-	ipIntelligenceService := services.NewIPIntelligenceService(settingsRepo)
+	ipIntelligenceService := services.NewIPIntelligenceService()
 	auditLogService := services.NewAuditLogService(auditLogRepo, ipIntelligenceService)
 	backupService := services.NewBackupService(db, settingsRepo)
 

@@ -78,10 +78,10 @@ func (s *AuditLogService) Log(entry LogEntry) {
 		ip := entry.IPAddress
 		go func() {
 			info := s.GeoIP.Lookup(ip)
-			if info.Country == "" && !info.IsVPN && !info.IsProxy {
-				return // nothing to add — lookup skipped/unavailable/unremarkable IP
+			if info.Country == "" {
+				return // nothing to add — lookup skipped/unavailable
 			}
-			if err := s.Logs.UpdateGeoInfo(id, info.Country, info.IsVPN, info.IsProxy); err != nil {
+			if err := s.Logs.UpdateGeoInfo(id, info.Country); err != nil {
 				log.Printf("audit log: failed to update geo info for entry %d: %v", id, err)
 			}
 		}()

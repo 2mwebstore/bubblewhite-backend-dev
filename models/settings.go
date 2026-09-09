@@ -84,14 +84,6 @@ type Settings struct {
 	// exactly which token wins.
 	BackupTelegramBotToken string `json:"backupTelegramBotToken" gorm:"type:varchar(255)"`
 
-	// IPIntelligenceAPIKey is a free IPLocate.io API key (1,000
-	// lookups/day free, no card required) used to enrich audit log
-	// entries with the actor's country, and whether their IP is a known
-	// VPN or proxy — see services/ip_intelligence_service.go. Blank
-	// means this enrichment is simply skipped (audit logging itself
-	// still works normally either way), not an error state.
-	IPIntelligenceAPIKey string `json:"ipIntelligenceApiKey" gorm:"type:varchar(255)"`
-
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
