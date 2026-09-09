@@ -29,23 +29,36 @@ type AuditLogFilter struct {
 	Action    string
 	Resource  string
 	Search    string // matches ActorName, Description, or ResourceLabel
-	// DateFrom/DateTo come from the admin panel's datetime-range picker
-	// (<input type="datetime-local">), so they arrive as
-	// "YYYY-MM-DDTHH:mm" — normalizeDateTime below converts that "T" to
-	// the space MySQL's DATETIME comparison expects. Still accepts a
-	// plain "YYYY-MM-DD" too (treated as midnight that day), so an older
-	// caller passing just a date doesn't break.
+	// DateFrom/DateTo come from the admin panel's date-range picker as
+	// plain "YYYY-MM-DD" strings (this component intentionally works in
+	// whole days, not specific times — see DateRangePicker.vue). Also
+	// still accepts a full "YYYY-MM-DDTHH:mm" datetime-local value for
+	// backward compatibility with anything else that might send one.
 	DateFrom string
 	DateTo   string
 }
 
-// normalizeDateTime converts an HTML datetime-local value
-// ("2026-09-08T14:30") into the "2026-09-08 14:30" form MySQL expects —
-// or passes a plain date straight through unchanged, since
-// "2026-09-08" alone is already valid as the start of that day in a
-// MySQL comparison.
-func normalizeDateTime(s string) string {
+// normalizeFrom converts a DateFrom value into the exact instant MySQL
+// should compare against: a plain date becomes that day's midnight
+// (already correct as the literal string — MySQL treats "2026-09-08" as
+// "2026-09-08 00:00:00" in a DATETIME comparison), while a datetime-local
+// value just needs its "T" swapped for the space MySQL expects.
+func normalizeFrom(s string) string {
 	return strings.Replace(s, "T", " ", 1)
+}
+
+// normalizeTo converts a DateTo value into the exact instant MySQL should
+// compare against — critically, NOT just normalizeFrom: a plain date
+// like "2026-09-08" would otherwise be compared as that day's midnight,
+// which excludes the entire rest of that day from the range. A plain
+// date is extended to 23:59:59 so "to 8 September" actually includes all
+// of the 8th; a value that already carries a time component (contains a
+// "T") is left as the exact instant it specifies, unchanged.
+func normalizeTo(s string) string {
+	if strings.Contains(s, "T") {
+		return strings.Replace(s, "T", " ", 1)
+	}
+	return s + " 23:59:59"
 }
 
 func (f AuditLogFilter) Scope() func(db *gorm.DB) *gorm.DB {
@@ -67,10 +80,10 @@ func (f AuditLogFilter) Scope() func(db *gorm.DB) *gorm.DB {
 			db = db.Where("actor_name LIKE ? OR description LIKE ? OR resource_label LIKE ?", like, like, like)
 		}
 		if f.DateFrom != "" {
-			db = db.Where("created_at >= ?", normalizeDateTime(f.DateFrom))
+			db = db.Where("created_at >= ?", normalizeFrom(f.DateFrom))
 		}
 		if f.DateTo != "" {
-			db = db.Where("created_at <= ?", normalizeDateTime(f.DateTo))
+			db = db.Where("created_at <= ?", normalizeTo(f.DateTo))
 		}
 		return db
 	}
@@ -87,6 +100,33 @@ func (f AuditLogFilter) Scope() func(db *gorm.DB) *gorm.DB {
 func (r *AuditLogRepository) DeleteOlderThan(actorType string, cutoff time.Time) (int64, error) {
 	result := r.DB.Where("actor_type = ? AND created_at < ?", actorType, cutoff).Delete(&models.AuditLog{})
 	return result.RowsAffected, result.Error
+}
+
+// DeleteByIDs removes specific entries by ID — the checkbox-based "select
+// these rows, delete them" flow on the admin panel, distinct from
+// DeleteOlderThan's "keep only the last N months" bulk cleanup. Still
+// scoped by ActorType, same reasoning as everywhere else on this table:
+// a request against the staff log view can never delete a customer
+// entry just because its ID happened to be guessed or reused, even if
+// somehow included in the request.
+func (r *AuditLogRepository) DeleteByIDs(actorType string, ids []uint) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.DB.Where("actor_type = ? AND id IN ?", actorType, ids).Delete(&models.AuditLog{})
+	return result.RowsAffected, result.Error
+}
+
+// UpdateGeoInfo patches just the country/VPN/proxy fields on one
+// already-created entry — called from a background goroutine once the
+// IP intelligence lookup for that entry's IP completes (see
+// AuditLogService.Log), never as part of creating the row itself.
+func (r *AuditLogRepository) UpdateGeoInfo(id uint, country string, isVPN, isProxy bool) error {
+	return r.DB.Model(&models.AuditLog{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"country":  country,
+		"is_vpn":   isVPN,
+		"is_proxy": isProxy,
+	}).Error
 }
 
 // DistinctActions/DistinctResources power the filter dropdowns on the

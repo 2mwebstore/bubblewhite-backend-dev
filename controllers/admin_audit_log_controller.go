@@ -126,3 +126,49 @@ func (ctrl *AdminAuditLogController) cleanup(c *gin.Context, actorType string) {
 	})
 	utils.OK(c, gin.H{"deleted": deleted})
 }
+
+type deleteSelectedInput struct {
+	IDs []uint `json:"ids" validate:"required,min=1"`
+}
+
+// POST /api/admin/audit-logs/staff/delete-selected and
+// /customers/delete-selected (requires audit.manage) — the checkbox-based
+// "select these specific rows, delete them" flow, distinct from the
+// preset-based Cleanup endpoint above. A dedicated POST endpoint rather
+// than DELETE-with-a-body: some proxies/middleware handle a body on a
+// DELETE request inconsistently, so a POST with a clear, unambiguous
+// action name in the URL avoids relying on that working correctly.
+func (ctrl *AdminAuditLogController) DeleteSelectedStaff(c *gin.Context) {
+	ctrl.deleteSelected(c, "admin")
+}
+
+func (ctrl *AdminAuditLogController) DeleteSelectedCustomers(c *gin.Context) {
+	ctrl.deleteSelected(c, "customer")
+}
+
+func (ctrl *AdminAuditLogController) deleteSelected(c *gin.Context, actorType string) {
+	var in deleteSelectedInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		utils.BadRequest(c, "invalid request body")
+		return
+	}
+	if errs, _ := utils.ValidateStruct(in); errs != nil {
+		utils.FailWithErrors(c, errs)
+		return
+	}
+
+	deleted, err := ctrl.Service.DeleteSelected(actorType, in.IDs)
+	if err != nil {
+		utils.InternalError(c, "failed to delete selected audit logs")
+		return
+	}
+
+	ip, ua := auditContext(c)
+	ctrl.Service.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "delete_selected", Resource: "audit_log",
+		Description: fmt.Sprintf("Deleted %d selected %s audit log entries", deleted, actorType),
+		IPAddress:   ip, UserAgent: ua,
+	})
+	utils.OK(c, gin.H{"deleted": deleted})
+}

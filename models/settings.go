@@ -64,6 +64,34 @@ type Settings struct {
 	// silently — see the backup service's own handling of this.
 	BackupTelegramGroupID string `json:"backupTelegramGroupId" gorm:"type:varchar(64)"`
 
+	// BackupTelegramBotToken is a dedicated bot token used ONLY for
+	// sending backups, kept separate from the shared TELEGRAM_BOT_TOKEN
+	// env var (used for order notifications and the OTP-via-Telegram
+	// webhook). Two real, concrete reasons to keep these separate rather
+	// than sharing one bot for everything:
+	//  1. The OTP bot has a webhook registered on it (see
+	//     TelegramBotController.Webhook) — a webhook and getUpdates-style
+	//     polling can't both be active on the same bot token at once
+	//     (Telegram itself rejects one with a "Conflict" error if the
+	//     other is active), so using a bot with no webhook at all for
+	//     backups avoids that entirely, even though sendDocument itself
+	//     doesn't actually require getUpdates.
+	//  2. Database-backed and editable here (like BackupTelegramGroupID
+	//     above), not just an env var, so this can be changed without a
+	//     redeploy.
+	// Blank means BackupService falls back to the shared
+	// TELEGRAM_BOT_TOKEN env var — see that service's own comment on
+	// exactly which token wins.
+	BackupTelegramBotToken string `json:"backupTelegramBotToken" gorm:"type:varchar(255)"`
+
+	// IPIntelligenceAPIKey is a free IPLocate.io API key (1,000
+	// lookups/day free, no card required) used to enrich audit log
+	// entries with the actor's country, and whether their IP is a known
+	// VPN or proxy — see services/ip_intelligence_service.go. Blank
+	// means this enrichment is simply skipped (audit logging itself
+	// still works normally either way), not an error state.
+	IPIntelligenceAPIKey string `json:"ipIntelligenceApiKey" gorm:"type:varchar(255)"`
+
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 

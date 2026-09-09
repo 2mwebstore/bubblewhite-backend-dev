@@ -42,6 +42,10 @@ func (ctrl *AdminBackupController) RunNow(c *gin.Context) {
 			utils.FailWithErrors(c, map[string]string{"backupTelegramGroupId": "សូមកំណត់លេខសម្គាល់ក្រុម Telegram សិន"})
 			return
 		}
+		if errors.Is(err, services.ErrTelegramBotNotConfigured) {
+			utils.FailWithErrors(c, map[string]string{"backupTelegramBotToken": "សូមកំណត់ Telegram Bot Token (ក្នុងការកំណត់ ឬ TELEGRAM_BOT_TOKEN) សិន"})
+			return
+		}
 		if errors.Is(err, services.ErrBackupAlreadyRunning) {
 			utils.Forbidden(c, "ការបម្រុងទុកកំពុងដំណើរការរួចហើយ សូមរង់ចាំបន្តិច")
 			return

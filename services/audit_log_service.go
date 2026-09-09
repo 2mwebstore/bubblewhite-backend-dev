@@ -13,11 +13,12 @@ import (
 )
 
 type AuditLogService struct {
-	Logs *repositories.AuditLogRepository
+	Logs  *repositories.AuditLogRepository
+	GeoIP *IPIntelligenceService
 }
 
-func NewAuditLogService(logs *repositories.AuditLogRepository) *AuditLogService {
-	return &AuditLogService{Logs: logs}
+func NewAuditLogService(logs *repositories.AuditLogRepository, geoIP *IPIntelligenceService) *AuditLogService {
+	return &AuditLogService{Logs: logs, GeoIP: geoIP}
 }
 
 // LogEntry is what every call site fills in — ResourceID/ResourceLabel are
@@ -43,6 +44,13 @@ type LogEntry struct {
 // record must never fail or block the actual action being audited. An
 // admin losing the ability to update a product because the audit table
 // had a hiccup would be a far worse outcome than one missing log entry.
+//
+// The country/VPN/proxy enrichment happens AFTER the row is written,
+// in a background goroutine — never inline here. A third-party API call
+// on the hot path of every login, product update, and order placed in
+// the app would add real, user-visible latency to all of them just to
+// populate three log-table columns; doing it after the fact means the
+// actual action being audited is never waiting on it.
 func (s *AuditLogService) Log(entry LogEntry) {
 	audit := &models.AuditLog{
 		ActorType:   entry.ActorType,
@@ -62,6 +70,21 @@ func (s *AuditLogService) Log(entry LogEntry) {
 	}
 	if err := s.Logs.Create(audit); err != nil {
 		log.Printf("audit log: failed to record entry (actor=%s:%d action=%s resource=%s): %v", entry.ActorType, entry.ActorID, entry.Action, entry.Resource, err)
+		return
+	}
+
+	if s.GeoIP != nil && entry.IPAddress != "" {
+		id := audit.ID
+		ip := entry.IPAddress
+		go func() {
+			info := s.GeoIP.Lookup(ip)
+			if info.Country == "" && !info.IsVPN && !info.IsProxy {
+				return // nothing to add — lookup skipped/unavailable/unremarkable IP
+			}
+			if err := s.Logs.UpdateGeoInfo(id, info.Country, info.IsVPN, info.IsProxy); err != nil {
+				log.Printf("audit log: failed to update geo info for entry %d: %v", id, err)
+			}
+		}()
 	}
 }
 
@@ -147,4 +170,11 @@ func (s *AuditLogService) Cleanup(actorType, preset string) (int64, error) {
 		return 0, err
 	}
 	return s.Logs.DeleteOlderThan(actorType, cutoff)
+}
+
+// DeleteSelected removes specific entries by ID — the checkbox-based
+// "select these rows, delete them" flow, distinct from Cleanup's preset-
+// based bulk retention delete.
+func (s *AuditLogService) DeleteSelected(actorType string, ids []uint) (int64, error) {
+	return s.Logs.DeleteByIDs(actorType, ids)
 }

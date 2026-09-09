@@ -50,6 +50,7 @@ func NewBackupService(db *gorm.DB, settings *repositories.SettingsRepository) *B
 
 var ErrBackupNotConfigured = errors.New("no Telegram group configured for backups — set one in Settings first")
 var ErrBackupAlreadyRunning = errors.New("a backup is already in progress")
+var ErrTelegramBotNotConfigured = errors.New("TELEGRAM_BOT_TOKEN is not set on the server")
 
 // RunBackup generates the dump and sends it to whichever Telegram group is
 // currently configured in Settings.BackupTelegramGroupID. Returns an error
@@ -73,9 +74,19 @@ func (s *BackupService) RunBackup() error {
 		return ErrBackupNotConfigured
 	}
 
-	botToken := config.Get().TelegramBotToken
+	// Prefers the dedicated Settings-based token (BackupTelegramBotToken)
+	// over the shared TELEGRAM_BOT_TOKEN env var — see that field's own
+	// doc comment on models.Settings for exactly why a separate bot is
+	// worth having. Falling back to the shared env var when the
+	// dedicated one isn't set keeps this working for anyone who hasn't
+	// configured the new field yet, rather than breaking backups that
+	// were already working.
+	botToken := settings.BackupTelegramBotToken
 	if botToken == "" {
-		return errors.New("TELEGRAM_BOT_TOKEN is not configured")
+		botToken = config.Get().TelegramBotToken
+	}
+	if botToken == "" {
+		return ErrTelegramBotNotConfigured
 	}
 
 	dump, err := s.generateDump()
