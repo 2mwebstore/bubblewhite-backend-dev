@@ -124,7 +124,17 @@ func (s *BackupService) RunBackup() (err error) {
 		return fmt.Errorf("dump is %d bytes, which exceeds Telegram's 50MB file size limit", len(dump))
 	}
 
-	loc, _ := time.LoadLocation("Asia/Phnom_Penh")
+	// Falls back to UTC if the timezone can't be loaded (logged, not
+	// fatal) — the tzdata import in main.go should mean this never
+	// actually happens now, but a wrong-timezone timestamp in a
+	// filename/caption is a cosmetic issue, not a reason to fail an
+	// otherwise-successful backup the way silently panicking on a nil
+	// Location used to.
+	loc, locErr := time.LoadLocation("Asia/Phnom_Penh")
+	if locErr != nil {
+		log.Printf("backup: could not load Asia/Phnom_Penh timezone (%v), using UTC for filename/caption", locErr)
+		loc = time.UTC
+	}
 	filename := fmt.Sprintf("bubblewhite-backup-%s.sql", time.Now().In(loc).Format("2006-01-02_15-04-05"))
 	caption := fmt.Sprintf("BubbleWhite database backup — %s (Phnom Penh time)", time.Now().In(loc).Format("2006-01-02 15:04"))
 

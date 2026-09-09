@@ -8,6 +8,15 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// Blank-imported so the IANA timezone database is embedded directly
+	// into the compiled binary, rather than relying on the OS having it
+	// installed at /usr/share/zoneinfo. Railway's (and many minimal
+	// container images') deployment environment does NOT include this
+	// by default — without this import, every time.LoadLocation call
+	// anywhere in the app (the backup scheduler and its Phnom Penh
+	// timestamps, the audit log retention cutoffs) fails with "unknown
+	// time zone", regardless of how correct the calling code is.
+	_ "time/tzdata"
 
 	"bubblewhite-backend/config"
 	"bubblewhite-backend/middlewares"
