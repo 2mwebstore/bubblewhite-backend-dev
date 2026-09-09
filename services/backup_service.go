@@ -34,7 +34,7 @@ type BackupService struct {
 	DB       *gorm.DB
 	Settings *repositories.SettingsRepository
 	// running guards against two backups ever executing at once — a full
-	// table scan of every table twice in parallel (the scheduled 12PM
+	// table scan of every table twice in parallel (the scheduled midnight
 	// run landing at the exact moment an admin clicks "Backup now", or a
 	// double-click on that same button) wastes resources for no benefit,
 	// since the second run would just produce a near-duplicate of the
@@ -146,10 +146,10 @@ func (s *BackupService) RunBackup() (err error) {
 	return nil
 }
 
-// StartScheduler runs RunBackup once a day at 12:00 PM Phnom Penh time —
-// a plain goroutine sleeping until the next occurrence, rather than
-// pulling in a cron library for a single daily job. Call once at
-// application startup.
+// StartScheduler runs RunBackup once a day at 12:00 AM (midnight) Phnom
+// Penh time — a plain goroutine sleeping until the next occurrence,
+// rather than pulling in a cron library for a single daily job. Call
+// once at application startup.
 func (s *BackupService) StartScheduler() {
 	go func() {
 		loc, err := time.LoadLocation("Asia/Phnom_Penh")
@@ -159,7 +159,7 @@ func (s *BackupService) StartScheduler() {
 		}
 		for {
 			now := time.Now().In(loc)
-			next := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, loc)
+			next := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 			if !now.Before(next) {
 				next = next.Add(24 * time.Hour)
 			}

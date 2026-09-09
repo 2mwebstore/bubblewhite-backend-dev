@@ -20,7 +20,7 @@ func NewAdminBackupController(s *services.BackupService, audit *services.AuditLo
 }
 
 // POST /api/admin/backup/run (requires settings.update) — triggers an
-// immediate, on-demand backup, alongside the automatic daily 12PM run
+// immediate, on-demand backup, alongside the automatic daily midnight run
 // (see BackupService.StartScheduler). Runs synchronously: for a store
 // this size the dump+Telegram upload comfortably finishes well within
 // the server's own 35s write timeout, so there's no real benefit to the
