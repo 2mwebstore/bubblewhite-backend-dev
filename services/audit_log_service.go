@@ -1,7 +1,9 @@
 package services
 
 import (
+	"errors"
 	"log"
+	"time"
 
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/repositories"
@@ -99,4 +101,50 @@ func (s *AuditLogService) FilterOptions(actorType string) (*FilterOptions, error
 		return nil, err
 	}
 	return &FilterOptions{Actions: actions, Resources: resources}, nil
+}
+
+var ErrInvalidRetentionPreset = errors.New("invalid retention preset")
+
+// retentionCutoff turns one of the admin panel's four preset labels into
+// an actual cutoff time — everything created before it gets deleted.
+// Calendar-month-aligned (the start of the 1st of the relevant month, in
+// Phnom Penh time — this app's own operating timezone, same choice as
+// the backup scheduler) rather than a rolling N*30-day window, so "keep
+// this month" means what it reads as regardless of which day of the
+// month it's actually clicked.
+func retentionCutoff(preset string) (time.Time, error) {
+	loc, err := time.LoadLocation("Asia/Phnom_Penh")
+	if err != nil {
+		return time.Time{}, err
+	}
+	now := time.Now().In(loc)
+	startOfThisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+
+	var monthsBack int
+	switch preset {
+	case "this_month":
+		monthsBack = 0
+	case "last_month":
+		monthsBack = 1
+	case "3_months":
+		monthsBack = 3
+	case "5_months":
+		monthsBack = 5
+	default:
+		return time.Time{}, ErrInvalidRetentionPreset
+	}
+	return startOfThisMonth.AddDate(0, -monthsBack, 0), nil
+}
+
+// Cleanup deletes every entry of the given actor type older than the
+// cutoff implied by preset — the "keep only the last N months" buttons
+// on the admin panel's two log views. Returns the number of rows removed
+// so the caller can show a concrete confirmation rather than a bare
+// "done".
+func (s *AuditLogService) Cleanup(actorType, preset string) (int64, error) {
+	cutoff, err := retentionCutoff(preset)
+	if err != nil {
+		return 0, err
+	}
+	return s.Logs.DeleteOlderThan(actorType, cutoff)
 }

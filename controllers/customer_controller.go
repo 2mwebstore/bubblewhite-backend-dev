@@ -38,6 +38,31 @@ func customerJSON(customer *models.Customer) gin.H {
 	if customer.Email != nil {
 		email = *customer.Email
 	}
+
+	// authProviders lists every sign-in method currently linked to this
+	// account, not necessarily just the one used the very first time
+	// they signed up — a customer can end up with more than one (e.g.
+	// registered by phone, later signed in with Google using the same
+	// email, which links rather than duplicates — see
+	// CustomerService.LoginOrRegisterWithGoogle). For the large majority
+	// of customers who only ever use one method, this is exactly "how
+	// they registered"; for the rarer multi-provider case it's an
+	// honest "these are the ways in", which is more useful to an admin
+	// than guessing at which one came first.
+	var authProviders []string
+	if customer.GoogleID != nil {
+		authProviders = append(authProviders, "google")
+	}
+	if customer.FacebookID != nil {
+		authProviders = append(authProviders, "facebook")
+	}
+	if customer.PasswordHash != nil {
+		authProviders = append(authProviders, "phone")
+	}
+	if authProviders == nil {
+		authProviders = []string{}
+	}
+
 	return gin.H{
 		"id":        customer.ID,
 		"name":      customer.Name,
@@ -52,7 +77,8 @@ func customerJSON(customer *models.Customer) gin.H {
 		// the first place (see CustomerService.ChangePassword, which
 		// already handles this correctly server-side; this field is what
 		// lets the UI match that instead of contradicting it).
-		"hasPassword": customer.PasswordHash != nil,
+		"hasPassword":   customer.PasswordHash != nil,
+		"authProviders": authProviders,
 	}
 }
 

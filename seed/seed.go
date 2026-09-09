@@ -56,6 +56,7 @@ var PermissionCatalog = []models.Permission{
 	{Slug: "customer.manage", Group: "customer", Description: "Reset customer passwords, activate/deactivate accounts"},
 
 	{Slug: "audit.view", Group: "audit", Description: "View staff and customer audit logs"},
+	{Slug: "audit.manage", Group: "audit", Description: "Delete/clean up old audit log entries"},
 }
 
 func allPermissionSlugs() []string {

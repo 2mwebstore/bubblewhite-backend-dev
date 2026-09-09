@@ -14,4 +14,6 @@ func RegisterAuditLogRoutes(api *gin.RouterGroup, c *Container) {
 	admin.GET("/staff/filters", middlewares.RequirePermission(c.DB, "audit.view"), c.AuditLog.StaffFilterOptions)
 	admin.GET("/customers", middlewares.RequirePermission(c.DB, "audit.view"), c.AuditLog.ListCustomers)
 	admin.GET("/customers/filters", middlewares.RequirePermission(c.DB, "audit.view"), c.AuditLog.CustomerFilterOptions)
+	admin.DELETE("/staff", middlewares.RequirePermission(c.DB, "audit.manage"), c.AuditLog.CleanupStaff)
+	admin.DELETE("/customers", middlewares.RequirePermission(c.DB, "audit.manage"), c.AuditLog.CleanupCustomers)
 }

@@ -1,6 +1,9 @@
 package repositories
 
 import (
+	"strings"
+	"time"
+
 	"bubblewhite-backend/models"
 
 	"gorm.io/gorm"
@@ -26,8 +29,23 @@ type AuditLogFilter struct {
 	Action    string
 	Resource  string
 	Search    string // matches ActorName, Description, or ResourceLabel
-	DateFrom  string // "YYYY-MM-DD", inclusive
-	DateTo    string // "YYYY-MM-DD", inclusive
+	// DateFrom/DateTo come from the admin panel's datetime-range picker
+	// (<input type="datetime-local">), so they arrive as
+	// "YYYY-MM-DDTHH:mm" — normalizeDateTime below converts that "T" to
+	// the space MySQL's DATETIME comparison expects. Still accepts a
+	// plain "YYYY-MM-DD" too (treated as midnight that day), so an older
+	// caller passing just a date doesn't break.
+	DateFrom string
+	DateTo   string
+}
+
+// normalizeDateTime converts an HTML datetime-local value
+// ("2026-09-08T14:30") into the "2026-09-08 14:30" form MySQL expects —
+// or passes a plain date straight through unchanged, since
+// "2026-09-08" alone is already valid as the start of that day in a
+// MySQL comparison.
+func normalizeDateTime(s string) string {
+	return strings.Replace(s, "T", " ", 1)
 }
 
 func (f AuditLogFilter) Scope() func(db *gorm.DB) *gorm.DB {
@@ -49,13 +67,26 @@ func (f AuditLogFilter) Scope() func(db *gorm.DB) *gorm.DB {
 			db = db.Where("actor_name LIKE ? OR description LIKE ? OR resource_label LIKE ?", like, like, like)
 		}
 		if f.DateFrom != "" {
-			db = db.Where("created_at >= ?", f.DateFrom+" 00:00:00")
+			db = db.Where("created_at >= ?", normalizeDateTime(f.DateFrom))
 		}
 		if f.DateTo != "" {
-			db = db.Where("created_at <= ?", f.DateTo+" 23:59:59")
+			db = db.Where("created_at <= ?", normalizeDateTime(f.DateTo))
 		}
 		return db
 	}
+}
+
+// DeleteOlderThan removes every entry of the given actor type created
+// before cutoff — the actual operation behind the admin panel's "keep
+// only the last N months" cleanup buttons (see AdminAuditLogController's
+// own doc comment for how each preset's cutoff is computed). Scoped by
+// ActorType the same way every other query on this table is, so running
+// this from the staff log view can never touch customer entries and vice
+// versa. Returns the number of rows actually removed so the admin gets a
+// concrete "deleted 1,204 entries" confirmation, not just a bare success.
+func (r *AuditLogRepository) DeleteOlderThan(actorType string, cutoff time.Time) (int64, error) {
+	result := r.DB.Where("actor_type = ? AND created_at < ?", actorType, cutoff).Delete(&models.AuditLog{})
+	return result.RowsAffected, result.Error
 }
 
 // DistinctActions/DistinctResources power the filter dropdowns on the

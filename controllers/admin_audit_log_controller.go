@@ -1,6 +1,9 @@
 package controllers
 
 import (
+	"errors"
+	"fmt"
+
 	"bubblewhite-backend/middlewares"
 	"bubblewhite-backend/repositories"
 	"bubblewhite-backend/services"
@@ -83,4 +86,43 @@ func (ctrl *AdminAuditLogController) filterOptions(c *gin.Context, actorType str
 		return
 	}
 	utils.OK(c, options)
+}
+
+// DELETE /api/admin/audit-logs/staff?keep=<preset> and
+// /customers?keep=<preset> (requires audit.view) — the "keep only the
+// last N months" cleanup buttons. preset must be one of "this_month",
+// "last_month", "3_months", "5_months" — see
+// AuditLogService.retentionCutoff for exactly what cutoff date each one
+// computes. Logs the cleanup itself as a new audit entry once it
+// completes — that new entry is created AFTER the delete runs, so it's
+// never at risk of deleting itself, and gives a real accountability
+// trail for who cleared out old log entries and when.
+func (ctrl *AdminAuditLogController) CleanupStaff(c *gin.Context) {
+	ctrl.cleanup(c, "admin")
+}
+
+func (ctrl *AdminAuditLogController) CleanupCustomers(c *gin.Context) {
+	ctrl.cleanup(c, "customer")
+}
+
+func (ctrl *AdminAuditLogController) cleanup(c *gin.Context, actorType string) {
+	preset := c.Query("keep")
+	deleted, err := ctrl.Service.Cleanup(actorType, preset)
+	if err != nil {
+		if errors.Is(err, services.ErrInvalidRetentionPreset) {
+			utils.BadRequest(c, "invalid retention preset")
+			return
+		}
+		utils.InternalError(c, "failed to clean up audit logs")
+		return
+	}
+
+	ip, ua := auditContext(c)
+	ctrl.Service.Log(services.LogEntry{
+		ActorType: "admin", ActorID: middlewares.CurrentUserID(c), ActorName: middlewares.CurrentUserEmail(c),
+		Action: "cleanup", Resource: "audit_log",
+		Description: fmt.Sprintf("Deleted %d %s audit log entries (kept: %s)", deleted, actorType, preset),
+		IPAddress:   ip, UserAgent: ua,
+	})
+	utils.OK(c, gin.H{"deleted": deleted})
 }
