@@ -93,6 +93,30 @@ type Config struct {
 	// project's own setup notes for the exact call.
 	TelegramWebhookSecret string
 
+	// InternalProxySecret guards a narrow, specific trust relationship:
+	// this backend's own Nuxt frontend makes SERVER-SIDE calls to this
+	// API during SSR (see useApi.js's comment on why — Nuxt renders
+	// storefront pages server-side, and that render needs real data).
+	// That server-side call originates from the Nuxt process itself, not
+	// the visitor's browser, so the "connecting IP" Railway's edge sees
+	// for THAT hop is the frontend service's own network address — not
+	// the actual visitor. Left unfixed, every SSR-rendered page load
+	// would attribute its backend request to the SAME wrong IP (the
+	// frontend service), meaning per-visitor rate limiting effectively
+	// becomes one shared bucket across every customer.
+	//
+	// The frontend forwards the real visitor's IP in an
+	// X-Internal-Client-IP header specifically for this case — but that
+	// header must never be trusted from just anyone: this backend's URL
+	// is directly, publicly callable (client-side JS hits it directly
+	// too), so without this secret, ANY caller could set
+	// X-Internal-Client-IP to whatever they want and trivially defeat
+	// rate limiting by claiming a fresh IP on every request. This value
+	// must be set to the same string on both the frontend and backend
+	// deployments — it is never sent to, or knowable by, an actual
+	// browser.
+	InternalProxySecret string
+
 	// Plasgate — Cambodia's largest SMS gateway, used as the paid
 	// fallback for OTP delivery when a customer has no Telegram linked
 	// (see services/sms_plasgate.go and services/otp_service.go).
@@ -172,6 +196,7 @@ func LoadConfig() *Config {
 			TelegramChatID:        getEnv("TELEGRAM_CHAT_ID", ""),
 			TelegramBotUsername:   getEnv("TELEGRAM_BOT_USERNAME", ""),
 			TelegramWebhookSecret: getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
+			InternalProxySecret:   getEnv("INTERNAL_PROXY_SECRET", ""),
 
 			PlasgatePrivateKey: getEnv("PLASGATE_PRIVATE_KEY", ""),
 			PlasgateSecretKey:  getEnv("PLASGATE_SECRET_KEY", ""),

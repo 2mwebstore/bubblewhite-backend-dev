@@ -1,12 +1,15 @@
 package middlewares
 
 import (
+	"crypto/subtle"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"bubblewhite-backend/config"
 
 	"github.com/gin-gonic/gin"
 )
@@ -210,11 +213,22 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 // a real maintenance risk (see Railway Central Station, "Which header
 // should I rely on for real client IP?", March 2026).
 //
-// Instead, this follows Railway's own current, explicit guidance from
-// that same thread: their edge proxy controls X-Forwarded-For and always
-// prepends the real connecting IP as the first entry — a client sending
-// a forged X-Forwarded-For cannot make their own request appear to come
-// from a different IP, since Railway's edge adds the true IP in front of
+// Checks for a trusted internal forward FIRST — see
+// config.InternalProxySecret's own doc comment for the full reasoning:
+// this backend's Nuxt frontend renders pages server-side, so its own
+// SSR-triggered calls to this API arrive as a request from the frontend
+// SERVICE, not the actual visitor's browser. The frontend forwards the
+// real visitor's IP via X-Internal-Client-IP specifically for this case,
+// authenticated by X-Internal-Secret (constant-time compared, matching
+// the same pattern used for the Telegram webhook secret) so that only
+// the legitimate frontend — not any arbitrary caller of this public API
+// — can supply it.
+//
+// Falls back to Railway's own current, explicit guidance from that same
+// thread: their edge proxy controls X-Forwarded-For and always prepends
+// the real connecting IP as the first entry — a client sending a forged
+// X-Forwarded-For cannot make their own request appear to come from a
+// different IP, since Railway's edge adds the true IP in front of
 // whatever the client sent, not after. So the first/leftmost entry is
 // safe to trust here specifically because it comes from Railway's proxy,
 // not the client. X-Real-Ip is deliberately NOT used: the same Railway
@@ -225,6 +239,14 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 // Falls back to Gin's own ClientIP() (the raw TCP remote address) when
 // there's no proxy in front at all — e.g. local development.
 func RealClientIP(c *gin.Context) string {
+	if secret := config.Get().InternalProxySecret; secret != "" {
+		if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Internal-Secret")), []byte(secret)) == 1 {
+			if forwarded := c.GetHeader("X-Internal-Client-IP"); forwarded != "" {
+				return forwarded
+			}
+		}
+	}
+
 	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
 		first := strings.TrimSpace(strings.Split(xff, ",")[0])
 		if first != "" {
