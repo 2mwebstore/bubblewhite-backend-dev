@@ -1,20 +1,50 @@
 package services
 
 import (
+	"time"
+
 	"bubblewhite-backend/models"
 	"bubblewhite-backend/repositories"
+	"bubblewhite-backend/utils"
 )
+
+// settingsCacheKey: there's only ever one settings row, so a single
+// fixed key is enough — no per-request variation to encode into it.
+const settingsCacheKey = "settings"
+
+// settingsCacheTTL is a safety net, not the primary invalidation
+// mechanism — Update() below actively re-caches the fresh value the
+// moment it's saved, so in normal operation a stale read would only
+// ever happen if this process's cache and the database somehow
+// disagreed outside of Update() itself (which doesn't happen today,
+// since this is the only write path). The TTL just bounds how long
+// that could ever last if it somehow did.
+const settingsCacheTTL = 10 * time.Minute
 
 type SettingsService struct {
 	Settings *repositories.SettingsRepository
+	Cache    *utils.Cache
 }
 
 func NewSettingsService(settings *repositories.SettingsRepository) *SettingsService {
-	return &SettingsService{Settings: settings}
+	return &SettingsService{Settings: settings, Cache: utils.NewCache()}
 }
 
+// Get is called on every single storefront page load (header/footer
+// company info, socials, logo) — exactly the kind of read-heavy, rarely-
+// changing endpoint worth caching. Falls back to the database
+// transparently on a cache miss; callers can't tell the difference
+// except by response time.
 func (s *SettingsService) Get() (*models.Settings, error) {
-	return s.Settings.Get()
+	if cached, ok := s.Cache.Get(settingsCacheKey); ok {
+		return cached.(*models.Settings), nil
+	}
+	settings, err := s.Settings.Get()
+	if err != nil {
+		return nil, err
+	}
+	s.Cache.Set(settingsCacheKey, settings, settingsCacheTTL)
+	return settings, nil
 }
 
 // Update replaces the settings row with the given values. This is a full
@@ -58,5 +88,10 @@ func (s *SettingsService) Update(patch *models.Settings) (*models.Settings, erro
 	if err := s.Settings.Update(current); err != nil {
 		return nil, err
 	}
+	// Re-cache the fresh value immediately rather than just invalidating
+	// — an admin saving settings and then immediately viewing the
+	// storefront should never see a stale cached response just because
+	// the next read happened to land before a lazy repopulation would.
+	s.Cache.Set(settingsCacheKey, current, settingsCacheTTL)
 	return current, nil
 }

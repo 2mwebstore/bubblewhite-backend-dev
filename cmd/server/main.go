@@ -75,7 +75,18 @@ func main() {
 	r.Use(globalLimiter.Middleware())
 
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		// Actually verifies the database connection rather than always
+		// reporting "ok" — a health check that can't fail gives false
+		// confidence to whatever's watching it (uptime monitoring, a
+		// load balancer's health probe). Checked live on every request
+		// rather than cached, since the whole point is catching the
+		// moment the DB connection actually drops.
+		sqlDB, err := db.DB()
+		if err != nil || sqlDB.Ping() != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "database": "unreachable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "database": "connected"})
 	})
 
 	// Swagger UI + raw OpenAPI spec (see docs/).
